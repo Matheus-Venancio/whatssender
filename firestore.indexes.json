@@ -1,0 +1,77 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "pessoas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "perfil.classificacao", "order": "ASCENDING" },
+        { "fieldPath": "perfil.engajamento", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pessoas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uf", "order": "ASCENDING" },
+        { "fieldPath": "perfil.engajamento", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pessoas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "interesse.temas", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "perfil.engajamento", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pessoas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "interesse.intencoes", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "perfil.engajamento", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pessoas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tags", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "atualizadoEm", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "assinaturas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "abaixoChave", "order": "ASCENDING" },
+        { "fieldPath": "em", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "alertas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "lido", "order": "ASCENDING" },
+        { "fieldPath": "em", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "alertas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tipo", "order": "ASCENDING" },
+        { "fieldPath": "em", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "eventos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "telefone", "order": "ASCENDING" },
+        { "fieldPath": "em", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

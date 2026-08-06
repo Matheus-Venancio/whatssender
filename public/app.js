@@ -1,0 +1,1763 @@
+// Painel da rede de apoio. Sem framework e sem build: o servidor entrega
+// este arquivo direto. Toda a leitura vem de /api.
+
+const $ = (sel, raiz = document) => raiz.querySelector(sel);
+const conteudo = $('#conteudo');
+const gaveta = $('#gaveta');
+const overlay = $('#overlay');
+
+const estado = {
+  vista: 'panorama',
+  panorama: null,
+  config: null,
+  filtros: { busca: '', faixa: '', grupo: '', tema: '', intencao: '', cadastro: '', tag: '', abaixo: '', uf: '', semGrupo: '', ordenar: 'engajamento', pagina: 1, porPagina: 25 },
+  lista: null,
+  fila: null,
+  whatsapp: null,
+  pessoaAberta: null,
+  inbox: { filtro: '', busca: '', mostrandoThread: false },
+  conversaAberta: null,
+  adicionar: null
+};
+
+// ------------------------------------------------------------------ utilidades
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+
+const num = (n) => new Intl.NumberFormat('pt-BR').format(n ?? 0);
+
+function quando(ts) {
+  if (!ts) return null;
+  const dif = Date.now() - ts;
+  const min = Math.floor(dif / 60000);
+  if (min < 1) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return 'ontem';
+  if (d < 30) return `há ${d} dias`;
+  const m = Math.floor(d / 30);
+  return m < 12 ? `há ${m} ${m === 1 ? 'mês' : 'meses'}` : `há ${Math.floor(m / 12)} ano(s)`;
+}
+
+const dataCurta = (ts) => ts
+  ? new Date(ts).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })
+  : '—';
+
+const PALETA_AVATAR = ['#5b21b6', '#2563eb', '#0891b2', '#16a34a', '#ca8a04', '#ea580c', '#db2777', '#7c3aed'];
+function corDoNome(nome) {
+  let h = 0;
+  for (const c of String(nome)) h = (h * 31 + c.charCodeAt(0)) % 997;
+  return PALETA_AVATAR[h % PALETA_AVATAR.length];
+}
+function iniciais(nome) {
+  const partes = String(nome || '?').trim().split(/\s+/);
+  return ((partes[0]?.[0] || '') + (partes.length > 1 ? partes.at(-1)[0] : '')).toUpperCase();
+}
+
+const corFaixa = (faixa) => estado.config?.cores_faixa?.[faixa] || '#94a3b8';
+
+function badgeFaixa(faixa) {
+  const cor = corFaixa(faixa);
+  return `<span class="faixa-badge" style="background:${cor}1a;color:${cor}">${esc(faixa || '—')}</span>`;
+}
+
+function chip(rotulo, cor, extra = '') {
+  return `<span class="chip" style="background:${cor}14;color:${cor};border-color:${cor}2e" ${extra}>${esc(rotulo)}</span>`;
+}
+
+async function api(caminho, opcoes) {
+  const r = await fetch(`/api${caminho}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opcoes,
+    body: opcoes?.body ? JSON.stringify(opcoes.body) : undefined
+  });
+  return r.json();
+}
+
+const queryFiltros = () => new URLSearchParams(
+  Object.entries(estado.filtros).filter(([, v]) => v !== '' && v != null)
+).toString();
+
+// ---------------------------------------------------------------------- vistas
+const VISTAS = {};
+
+// ============================================================ PANORAMA
+VISTAS.panorama = async () => {
+  const p = estado.panorama = await api('/panorama');
+  estado.config ??= await api('/config');
+
+  $('#conta-pessoas').textContent = num(p.pessoas);
+  $('#conta-grupos').textContent = num(p.grupos);
+
+  $('#conta-abaixos').textContent = num(p.abaixos.length);
+  pintarAlertas(p.alertas);
+
+  const pctCadastro = p.pessoas ? Math.round((p.cadastradas / p.pessoas) * 100) : 0;
+  const pctNoGrupo = p.cadastradas
+    ? Math.round(((p.cadastradas - p.assinantes_sem_grupo) / p.cadastradas) * 100) : 0;
+  const serieVisivel = p.grupos === 0 ? p.serie_assinaturas : p.serie_mensagens;
+  const maxSerie = Math.max(1, ...serieVisivel);
+  const totalFaixas = p.faixas.reduce((s, f) => s + f.n, 0) || 1;
+  const ordemFaixas = ['Embaixador', 'Ativo', 'Morno', 'Observador', 'Adormecido'];
+  const faixas = ordemFaixas
+    .map((nome) => ({ nome, n: p.faixas.find((f) => f.faixa === nome)?.n || 0 }))
+    .filter((f) => f.n > 0);
+
+  const maxTema = Math.max(1, ...p.temas.map((t) => t.pessoas));
+  const intencoes = Object.entries(p.intencoes).filter(([, v]) => v.n > 0).sort((a, b) => b[1].n - a[1].n);
+
+  const semWhatsapp = p.grupos === 0;
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Panorama da rede</h2>
+        <p>${num(p.pessoas)} pessoas · ${num(p.assinaturas)} assinaturas${
+          semWhatsapp ? ' · WhatsApp ainda não conectado'
+            : ` · ${p.grupos} grupos · ${num(p.mensagens)} mensagens lidas`}</p>
+      </div>
+      <div class="acoes">
+        <button class="btn" data-acao="recalcular">↻ Recalcular perfis</button>
+        <button class="btn primario" data-vista="pessoas">Ver todas as pessoas</button>
+      </div>
+    </div>
+
+    ${semWhatsapp ? `
+      <div class="alerta info" style="margin-bottom:16px">
+        <b>A base dos abaixo-assinados já está em produção.</b>
+        Falta conectar o WhatsApp para começar a medir participação, interesse por conversa
+        e saída de grupo — hoje todo mundo aparece como <i>Observador</i> porque ainda não há
+        nenhum grupo sendo lido.
+        <button class="btn primario" style="margin-top:10px" data-vista="conexao">Conectar WhatsApp agora</button>
+      </div>` : ''}
+
+    <div class="grade g-kpi" style="margin-bottom:16px">
+      ${kpi('Pessoas na base', num(p.pessoas), `${num(p.novos_7d)} nova(s) nos últimos 7 dias`)}
+      ${kpi('Assinaturas', num(p.assinaturas), `${num(p.abaixos.length)} abaixo-assinados · ${num(p.assinaturas - p.cadastradas)} pessoa(s) assinaram mais de um`)}
+      ${kpi('Já estão em grupo', `${pctNoGrupo}%`, p.assinantes_sem_grupo
+        ? `<b style="color:#dc2626">${num(p.assinantes_sem_grupo)}</b> assinaram e não estão em nenhum grupo`
+        : 'toda a base assinante está em algum grupo')}
+      ${kpi('Ativos (7 dias)', num(p.ativos_7d), `${Math.round((p.ativos_7d / (p.pessoas || 1)) * 100)}% da base falou essa semana`)}
+      ${kpi('Perfil preenchido', `${p.completude_media}%`, 'média de completude das fichas')}
+      ${kpi('Saídas de grupo (30d)', num(p.saidas_30d), p.alertas.total
+        ? `<b style="color:#dc2626">${num(p.alertas.total)}</b> alerta(s) não lido(s)`
+        : 'nenhum alerta pendente')}
+    </div>
+
+    ${p.abaixos.length ? `
+    <section class="card" style="margin-bottom:16px">
+      <header><h3>Abaixo-assinados em campanha</h3><span class="dica">clique para filtrar as pessoas</span></header>
+      <div class="corpo grade g-3">
+        ${p.abaixos.map((a) => `
+          <div class="abaixo-card" data-filtro-abaixo="${esc(a.chave)}" style="cursor:pointer">
+            <div>
+              ${a.bandeira ? chip(a.bandeira, '#5b21b6') : ''}
+              <div class="titulo" style="margin-top:7px">${esc(a.titulo)}</div>
+            </div>
+            <div class="numeros">
+              <div><b>${num(a.assinaturas)}</b> assinaturas</div>
+              <div><b>${num(a.ja_no_grupo)}</b> já no grupo</div>
+              <div><b>${num(a.instagram)}</b> via Instagram</div>
+            </div>
+            <div class="barra"><i style="width:${(a.ja_no_grupo / (a.assinaturas || 1)) * 100}%;background:var(--verde)"></i></div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              ${a.temas.map((t) => chip(t.rotulo, t.cor)).join('')}
+            </div>
+          </div>`).join('')}
+      </div>
+    </section>` : ''}
+
+    <div class="grade g-2" style="margin-bottom:16px">
+      <section class="card">
+        <header><h3>${semWhatsapp ? 'Assinaturas por dia · 30 dias' : 'Movimento dos grupos · 30 dias'}</h3>
+          <span class="dica">${semWhatsapp ? 'captação por anúncio' : 'mensagens por dia'}</span></header>
+        <div class="corpo">
+          ${serieVisivel.some(Boolean) ? `
+            <div class="sparkline" style="height:120px">
+              ${serieVisivel.map((v, i) => `<i class="${i >= 23 ? 'forte' : ''}" style="height:${Math.max(3, (v / maxSerie) * 100)}%" title="${v}"></i>`).join('')}
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--tinta-4);margin-top:8px">
+              <span>30 dias atrás</span><span>última semana</span>
+            </div>`
+          : '<p class="vazio" style="padding:34px 0;text-align:center">Sem movimento nos últimos 30 dias.</p>'}
+        </div>
+      </section>
+
+      <section class="card">
+        <header><h3>Classificação de participação</h3></header>
+        <div class="corpo">
+          <div class="empilhada">
+            ${faixas.map((f) => `<span style="flex:${f.n};background:${corFaixa(f.nome)}" title="${f.nome}: ${f.n}">${(f.n / totalFaixas) > .09 ? f.n : ''}</span>`).join('')}
+          </div>
+          <div class="legenda">
+            ${faixas.map((f) => `
+              <span class="item" data-filtro-faixa="${esc(f.nome)}">
+                <i class="cor" style="background:${corFaixa(f.nome)}"></i>${esc(f.nome)}
+                <b style="color:var(--tinta)">${f.n}</b>
+              </span>`).join('')}
+          </div>
+          <p style="font-size:12px;color:var(--tinta-3);margin:14px 0 0;line-height:1.5">
+            ${semWhatsapp
+              ? 'A classificação mede participação nos grupos. Enquanto o WhatsApp não estiver conectado, todo mundo fica como <b>Observador</b> — a régua só começa a rodar quando as mensagens chegam.'
+              : 'O <b>Embaixador</b> fala, é respondido e está em vários grupos. O <b>Observador</b> entrou e nunca escreveu — costuma ser a maior fatia e o maior potencial escondido da rede.'}
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <div class="grade g-2" style="margin-bottom:16px">
+      <section class="card">
+        <header><h3>O que a rede quer resolver</h3><span class="dica">clique para filtrar</span></header>
+        <div class="corpo">
+          <div class="barras-h">
+            ${p.temas.slice(0, 10).map((t) => `
+              <div class="barra-h" data-filtro-tema="${esc(t.tema)}">
+                <span class="rot">${esc(t.rotulo)}</span>
+                <span class="barra"><i style="width:${(t.pessoas / maxTema) * 100}%;background:${t.cor}"></i></span>
+                <span class="n">${t.pessoas}</span>
+              </div>`).join('')}
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <header><h3>Sinais para agir</h3><span class="dica">extraídos das mensagens</span></header>
+        <div class="corpo" style="display:grid;gap:9px">
+          ${intencoes.length ? intencoes.map(([chave, v]) => `
+            <div class="barra-h" data-filtro-intencao="${esc(chave)}" style="grid-template-columns:1fr auto">
+              <span class="rot">${chip(v.rotulo, v.cor)}</span>
+              <span class="n" style="font-weight:650;color:var(--tinta)">${v.n}</span>
+            </div>`).join('')
+          : `<p class="vazio" style="padding:8px 0">Nenhum sinal ainda — eles nascem do que as pessoas escrevem nos grupos.</p>`}
+          <p style="font-size:12px;color:var(--tinta-3);margin:6px 0 0;line-height:1.5">
+            Cada sinal vem de expressões reais no grupo — “conta comigo”, “já compartilhei”,
+            “sou presidente da associação”. É o que transforma conversa em lista de tarefas.
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <div class="grade g-2">
+      <section class="card">
+        <header><h3>Onde a rede está</h3><span class="dica">cidade e estado</span></header>
+        <div class="corpo">
+          ${p.ufs.length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:16px">
+            ${p.ufs.map((u) => `<span class="chip clicavel" data-filtro-uf="${esc(u.uf)}"
+              style="background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe">${esc(u.uf)} <b>${u.n}</b></span>`).join('')}
+          </div>` : ''}
+          <div class="barras-h">
+            ${p.cidades.map((c) => `
+              <div class="barra-h">
+                <span class="rot">${esc(c.cidade)}</span>
+                <span class="barra"><i style="width:${(c.n / p.cidades[0].n) * 100}%;background:var(--azul)"></i></span>
+                <span class="n">${c.n}</span>
+              </div>`).join('') || '<p class="vazio">Ninguém preencheu cidade ainda.</p>'}
+          </div>
+        </div>
+      </section>
+      <section class="card">
+        <header><h3>Quem é a rede</h3><span class="dica">atuação declarada</span></header>
+        <div class="corpo">
+          <div class="barras-h">
+            ${p.atuacoes.slice(0, 9).map((a) => `
+              <div class="barra-h">
+                <span class="rot" title="${esc(a.atuacao)}">${esc(a.atuacao)}</span>
+                <span class="barra"><i style="width:${(a.n / p.atuacoes[0].n) * 100}%;background:var(--laranja)"></i></span>
+                <span class="n">${a.n}</span>
+              </div>`).join('') || '<p class="vazio">Ninguém preencheu atuação ainda.</p>'}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+};
+
+const kpi = (rotulo, valor, nota) => `
+  <div class="card kpi">
+    <div class="rotulo">${rotulo}</div>
+    <div class="valor">${valor}</div>
+    <div class="nota">${nota}</div>
+  </div>`;
+
+// ============================================================ PESSOAS
+VISTAS.pessoas = async () => {
+  estado.config ??= await api('/config');
+  estado.panorama ??= await api('/panorama');
+  const p = estado.panorama;
+  const dados = estado.lista = await api(`/pessoas?${queryFiltros()}`);
+  const f = estado.filtros;
+
+  const opcoes = (lista, atual, vazio) =>
+    `<option value="">${vazio}</option>` +
+    lista.map(([v, r]) => `<option value="${esc(v)}" ${atual === v ? 'selected' : ''}>${esc(r)}</option>`).join('');
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Pessoas da rede</h2>
+        <p>${num(dados.total)} pessoa(s) no filtro atual · a ficha de cada uma abre com um clique</p>
+      </div>
+      <div class="acoes">
+        <a class="btn" href="/api/export.csv?${queryFiltros()}">⬇ Exportar CSV</a>
+        <button class="btn primario" data-vista="fila">🎯 Fila de ação</button>
+      </div>
+    </div>
+
+    <div class="filtros">
+      <input type="search" id="busca" placeholder="Buscar por nome, telefone, cidade ou atuação…" value="${esc(f.busca)}">
+      <select id="fx-faixa">${opcoes(estado.config.faixas.map((x) => [x, x]), f.faixa, 'Toda classificação')}</select>
+      <select id="fx-grupo">${opcoes(p.grupos_lista.map((g) => [String(g.id), g.nome]), f.grupo, 'Todos os grupos')}</select>
+      <select id="fx-tema">${opcoes(Object.entries(estado.config.temas).map(([k, v]) => [k, v.rotulo]), f.tema, 'Todo interesse')}</select>
+      <select id="fx-intencao">${opcoes(Object.entries(estado.config.intencoes).map(([k, v]) => [k, v.rotulo]), f.intencao, 'Todo sinal')}</select>
+      <select id="fx-abaixo">${opcoes(p.abaixos.map((a) => [a.chave, a.titulo]), f.abaixo, 'Todo abaixo-assinado')}</select>
+      <select id="fx-uf">${opcoes(p.ufs.map((u) => [u.uf, `${u.uf} (${u.n})`]), f.uf, 'Todo estado')}</select>
+      <select id="fx-cadastro">${opcoes([['sim', 'Só quem assinou'], ['nao', 'Só quem falta assinar']], f.cadastro, 'Cadastro: todos')}</select>
+      <select id="fx-semGrupo">${opcoes([['sim', 'Fora dos grupos']], f.semGrupo, 'Grupo: todos')}</select>
+      <select id="fx-ordenar">${opcoes([
+        ['engajamento', 'Mais engajados'], ['recentes', 'Falaram por último'],
+        ['antigos', 'Sumiram há mais tempo'], ['completude', 'Fichas mais incompletas'],
+        ['novos', 'Entraram recentemente'], ['nome', 'Nome A–Z']
+      ], f.ordenar, '')}</select>
+      ${Object.values({ ...f, ordenar: '', pagina: '', porPagina: '' }).some(Boolean)
+        ? '<button class="btn fantasma" data-acao="limpar-filtros">limpar filtros</button>' : ''}
+    </div>
+
+    <section class="card">
+      <div class="tabela-rolagem">
+      <table class="tabela">
+        <thead>
+          <tr>
+            <th>Pessoa</th><th>Cidade</th><th>Atuação</th>
+            <th>Última resposta no grupo</th><th>Classificação</th><th>Interesse</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dados.itens.map(linhaPessoa).join('') || '<tr><td colspan="6" style="padding:40px;text-align:center" class="vazio">Nenhuma pessoa com esses filtros.</td></tr>'}
+        </tbody>
+      </table>
+      </div>
+      <div class="paginacao">
+        <button class="btn" data-pagina="${dados.pagina - 1}" ${dados.pagina <= 1 ? 'disabled' : ''}>‹ anterior</button>
+        <span>página ${dados.pagina} de ${dados.paginas}</span>
+        <button class="btn" data-pagina="${dados.pagina + 1}" ${dados.pagina >= dados.paginas ? 'disabled' : ''}>próxima ›</button>
+        <span style="margin-left:auto">${num(dados.total)} resultado(s)</span>
+      </div>
+    </section>
+  `;
+
+  $('#busca').addEventListener('input', debounce((e) => {
+    estado.filtros.busca = e.target.value;
+    estado.filtros.pagina = 1;
+    render();
+  }, 280));
+
+  for (const [id, chave] of [['#fx-faixa', 'faixa'], ['#fx-grupo', 'grupo'], ['#fx-tema', 'tema'],
+    ['#fx-intencao', 'intencao'], ['#fx-cadastro', 'cadastro'], ['#fx-ordenar', 'ordenar'],
+    ['#fx-abaixo', 'abaixo'], ['#fx-uf', 'uf'], ['#fx-semGrupo', 'semGrupo']]) {
+    $(id).addEventListener('change', (e) => {
+      estado.filtros[chave] = e.target.value;
+      estado.filtros.pagina = 1;
+      render();
+    });
+  }
+};
+
+function linhaPessoa(x) {
+  const cor = corDoNome(x.exibicao);
+  const semNome = !x.nome;
+  return `
+    <tr data-pessoa="${x.id}">
+      <td>
+        <div class="pessoa-celula">
+          <span class="avatar" style="background:${cor}">${esc(iniciais(x.exibicao))}</span>
+          <span>
+            <span class="nome">${esc(x.exibicao)}</span>
+            ${semNome ? '<span class="chip" style="background:#fef3c7;color:#92400e;margin-left:6px">só WhatsApp</span>' : ''}
+            <span class="sub" style="display:block">${esc(x.telefone_fmt)}</span>
+          </span>
+        </div>
+      </td>
+      <td>${x.cidade
+          ? esc(x.cidade) + (x.uf ? `<span class="sub" style="display:block">${esc(x.uf)}${x.bairro ? ` · ${esc(x.bairro)}` : ''}</span>` : '')
+          : x.uf ? `${esc(x.uf)}<span class="sub" style="display:block">cidade não informada</span>`
+            : '<span class="vazio">não preencheu</span>'}</td>
+      <td>${x.atuacao ? esc(x.atuacao) : '<span class="vazio">não preencheu</span>'}</td>
+      <td class="ultima-msg">
+        ${x.ultima_msg_texto
+          ? `<div class="txt">${esc(x.ultima_msg_texto)}</div>
+             <div class="meta">${quando(x.ultima_msg_ts)} · ${esc(x.ultima_msg_grupo || '')}</div>`
+          : x.grupos.length
+            ? '<span class="vazio">está no grupo e nunca escreveu</span>'
+            : '<span class="vazio">ainda não está em nenhum grupo</span>'}
+      </td>
+      <td style="min-width:130px">
+        ${badgeFaixa(x.faixa)}
+        <div style="margin-top:7px">
+          <span class="barra" style="display:block"><i style="width:${x.engajamento || 0}%;background:${corFaixa(x.faixa)}"></i></span>
+          <span class="sub">${x.engajamento || 0}/100 · ${num(x.msgs_total)} msgs</span>
+        </div>
+      </td>
+      <td style="min-width:200px">
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          ${x.tema_principal_rotulo ? chip(x.tema_principal_rotulo, x.tema_principal_cor) : '<span class="vazio">sem sinal ainda</span>'}
+          ${x.intencoes_rotulos.slice(0, 2).map((i) => chip(i.rotulo, i.cor)).join('')}
+        </div>
+        ${x.abaixos.length ? `<div class="sub" style="margin-top:5px">✍️ ${x.abaixos.length === 1
+            ? esc(x.abaixos[0].bandeira || x.abaixos[0].titulo.slice(0, 34))
+            : `assinou ${x.abaixos.length} abaixo-assinados`}</div>` : ''}
+      </td>
+    </tr>`;
+}
+
+// ============================================================ FILA DE AÇÃO
+VISTAS.fila = async () => {
+  const f = estado.fila = await api('/fila');
+
+  const coluna = (titulo, dica, itens, porque) => `
+    <section class="card">
+      <header><h3>${titulo}</h3><span class="dica">${itens.length}</span></header>
+      <div class="corpo" style="padding-top:4px">
+        <p style="font-size:12px;color:var(--tinta-3);margin:6px 0 10px;line-height:1.5">${dica}</p>
+        ${itens.map((x) => `
+          <div class="fila-item" data-pessoa="${x.id}">
+            <span class="avatar" style="background:${corDoNome(x.exibicao)}">${esc(iniciais(x.exibicao))}</span>
+            <span style="min-width:0">
+              <div class="nome">${esc(x.exibicao)}</div>
+              <div class="porque">${porque(x)}</div>
+            </span>
+            <span style="margin-left:auto">${badgeFaixa(x.faixa)}</span>
+          </div>`).join('') || '<p class="vazio">Nada pendente aqui. 👏</p>'}
+      </div>
+    </section>`;
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Fila de ação</h2>
+        <p>O sistema não entrega só relatório: entrega a lista de quem tocar hoje, e por quê.</p>
+      </div>
+    </div>
+    <div class="colunas-fila">
+      ${coluna('🚪 Assinaram e não estão em grupo',
+        'Já disseram sim publicamente e continuam fora da rede. É a conversão mais barata que existe: mandar o convite do grupo.',
+        f.foraDoGrupo, (x) => `${esc(x.abaixos.map((a) => a.bandeira || a.titulo).join(' · ') || 'assinou')} · ${esc(x.local || 'sem local')}`)}
+
+      ${coluna('⚠️ Saíram dos grupos',
+        'Não estão mais em nenhum grupo. Vale entender o motivo antes de reconvidar — principalmente quem participava.',
+        f.saidas, (x) => `${esc(x.faixa)} · ${num(x.msgs_total)} mensagens · ${esc(x.local || 'sem local')}`)}
+
+      ${coluna('🤝 Se ofereceram para ajudar',
+        'Escreveram “conta comigo”, “quero participar” ou se apresentaram como liderança. Prioridade máxima: contato individual em até 48h.',
+        f.oportunidades, (x) => `${esc(x.intencoes_rotulos.map((i) => i.rotulo).join(' · '))} · ${esc(x.cidade || 'cidade não informada')}`)}
+
+      ${coluna('📝 Engajados sem cadastro',
+        'Participam bastante mas nunca preencheram o abaixo-assinado. São nomes que a campanha ainda não “tem”.',
+        f.semCadastro, (x) => `engajamento ${x.engajamento} · ${num(x.msgs_total)} mensagens · falta nome, cidade e atuação`)}
+
+      ${coluna('🌡️ Esfriando',
+        'Já foram ativos e pararam de falar. Reativar quem já gostava custa muito menos que conquistar alguém novo.',
+        f.esfriando, (x) => `${x.dias_sem_falar} dias em silêncio · era ativo com ${num(x.msgs_total)} mensagens`)}
+
+      ${coluna('🆘 Demandas em aberto',
+        'Trouxeram um problema concreto no grupo. Cada retorno dado aqui vira relato de caso resolvido.',
+        f.demandas, (x) => `${esc(x.tema_principal_rotulo || 'demanda')} · ${esc((x.ultima_msg_texto || '').slice(0, 60))}`)}
+    </div>`;
+};
+
+// ============================================================ CONVERSAS
+const CORES_SENTIMENTO = {
+  positivo: '#16a34a', neutro: '#94a3b8', negativo: '#f59e0b', critico: '#dc2626'
+};
+const ROTULOS_SENTIMENTO = {
+  positivo: 'Clima positivo', neutro: 'Clima neutro',
+  negativo: 'Clima negativo', critico: 'Atenção — risco'
+};
+const CORES_TOM = { acolhedor: '#16a34a', direto: '#2563eb', formal: '#64748b' };
+
+const ABAS_INBOX = [
+  ['', 'Tudo'], ['nao_lidas', 'Não lidas'], ['aguardando', 'Aguardando resposta'],
+  ['privadas', 'Privadas'], ['grupos', 'Grupos'], ['atrito', 'Atrito']
+];
+
+VISTAS.conversas = async () => {
+  const { itens, contagem } = await api(
+    `/conversas?filtro=${estado.inbox.filtro}&busca=${encodeURIComponent(estado.inbox.busca)}`
+  );
+  pintarConversas(contagem);
+
+  // Abre a primeira conversa que precisa de resposta, se nada estiver selecionado.
+  if (!estado.conversaAberta && itens.length) {
+    const alvo = itens.find((c) => c.nao_lidas > 0) || itens.find((c) => c.aguardando) || itens[0];
+    estado.conversaAberta = { tipo: alvo.tipo, id: alvo.tipo === 'grupo' ? alvo.grupo_id : alvo.pessoa_id };
+  }
+
+  conteudo.innerHTML = `
+    <div class="cabecalho" style="margin-bottom:16px">
+      <div>
+        <h2>Conversas</h2>
+        <p>${num(contagem.naoLidas)} não lida(s) · ${num(contagem.aguardando)} esperando resposta ·
+           ${num(contagem.privadas)} privadas · ${num(contagem.grupos)} grupos</p>
+      </div>
+      <div class="acoes"><button class="btn" data-vista="alertas">🔔 Alertas</button></div>
+    </div>
+
+    <div class="inbox ${estado.inbox.mostrandoThread ? 'mostrando-thread' : ''}">
+      <aside class="inbox-lista">
+        <div class="inbox-topo">
+          <input type="search" id="busca-conversa" placeholder="Buscar conversa…" value="${esc(estado.inbox.busca)}">
+          <div class="inbox-abas">
+            ${ABAS_INBOX.map(([v, r]) => `
+              <button class="inbox-aba ${estado.inbox.filtro === v ? 'ativa' : ''}" data-aba="${v}">${r}</button>
+            `).join('')}
+          </div>
+        </div>
+        <div class="inbox-itens">
+          ${itens.map(itemConversa).join('') ||
+            '<p class="vazio" style="padding:26px;text-align:center">Nenhuma conversa aqui.</p>'}
+        </div>
+      </aside>
+
+      <section class="inbox-thread" id="thread">
+        <div class="thread-vazia">carregando…</div>
+      </section>
+    </div>`;
+
+  $('#busca-conversa').addEventListener('input', debounce((e) => {
+    estado.inbox.busca = e.target.value;
+    render();
+  }, 300));
+
+  await desenharThread();
+};
+
+function itemConversa(c) {
+  const ativa = estado.conversaAberta &&
+    estado.conversaAberta.tipo === c.tipo &&
+    estado.conversaAberta.id === (c.tipo === 'grupo' ? c.grupo_id : c.pessoa_id);
+  const cor = corDoNome(c.titulo);
+  const sent = c.sentimento && c.tipo === 'privada' ? CORES_SENTIMENTO[c.sentimento] : null;
+
+  return `
+    <div class="conversa-item ${ativa ? 'ativa' : ''}"
+         data-conversa="${c.tipo}" data-id="${c.tipo === 'grupo' ? c.grupo_id : c.pessoa_id}">
+      <span class="avatar" style="background:${cor};${c.tipo === 'grupo' ? 'border-radius:50%' : ''}">
+        ${esc(iniciais(c.titulo))}
+      </span>
+      <span class="corpo">
+        <span class="linha1">
+          ${sent ? `<i class="pino-sentimento" style="background:${sent}" title="${ROTULOS_SENTIMENTO[c.sentimento]}"></i>` : ''}
+          <span class="nome">${esc(c.titulo)}</span>
+          <span class="hora">${c.ts ? quando(c.ts) : ''}</span>
+        </span>
+        <div class="previa">${c.ultimo_de_mim ? '<span style="color:var(--tinta-4)">você: </span>' : ''}${esc(c.previa || 'sem mensagens')}</div>
+        <div class="sub">${esc(c.subtitulo)}${c.atritos ? ` · <b style="color:#dc2626">${c.atritos} atrito</b>` : ''}</div>
+      </span>
+      ${c.nao_lidas ? `<span class="badge-nao-lidas">${c.nao_lidas}</span>` : ''}
+    </div>`;
+}
+
+async function desenharThread() {
+  const thread = $('#thread');
+  if (!thread) return;
+  const alvo = estado.conversaAberta;
+  if (!alvo) {
+    thread.innerHTML = '<div class="thread-vazia">Escolha uma conversa à esquerda.</div>';
+    return;
+  }
+
+  const dados = alvo.tipo === 'grupo'
+    ? await api(`/conversas/grupo/${alvo.id}`)
+    : await api(`/conversas/pessoa/${alvo.id}`);
+
+  thread.innerHTML = alvo.tipo === 'grupo' ? threadDeGrupo(dados) : threadPrivada(dados);
+
+  const msgs = $('.thread-msgs', thread);
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+
+  const campo = $('#compositor', thread);
+  if (campo) {
+    campo.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarResposta(); }
+    });
+    campo.focus();
+  }
+}
+
+const bolha = (m, mostrarAutor) => `
+  <div class="bolha ${m.de_mim ? 'minha' : 'deles'}">
+    ${mostrarAutor && !m.de_mim && m.autor ? `<div class="autor">${esc(m.autor)}</div>` : ''}
+    <div>${m.texto ? esc(m.texto) : `<i style="color:var(--tinta-4)">${esc(m.tipo)}</i>`}</div>
+    <div class="hora">${new Date(m.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+  </div>`;
+
+function threadPrivada(c) {
+  const p = c.pessoa;
+  const cor = corDoNome(p.nomeExibicao);
+  const sent = CORES_SENTIMENTO[c.sentimento];
+
+  return `
+    <div class="thread-topo">
+      <button class="btn voltar-lista" data-acao="voltar-lista" title="Voltar">‹</button>
+      <span class="avatar" style="background:${cor}">${esc(iniciais(p.nomeExibicao))}</span>
+      <div style="min-width:0">
+        <div style="font-weight:650;letter-spacing:-.01em">${esc(p.nomeExibicao)}</div>
+        <div style="font-size:11.5px;color:var(--tinta-3)">
+          ${esc(formatarTel(p.telefone))}${p.cidade ? ` · ${esc(p.cidade)}${p.uf ? `/${p.uf}` : ''}` : ''}
+          ${p.faixa ? ` · ${esc(p.faixa)}` : ''}
+        </div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:7px;align-items:center">
+        <span class="chip" style="background:${sent}14;color:${sent};border-color:${sent}30">
+          ${ROTULOS_SENTIMENTO[c.sentimento]}
+        </span>
+        <button class="btn" data-pessoa="${p.id}">Ver ficha</button>
+      </div>
+    </div>
+
+    ${c.risco ? `<div class="alerta" style="margin:12px 16px 0;border-radius:0 9px 9px 0">
+      <b>${esc(c.risco.rotulo)}.</b> ${esc(c.risco.acao)}
+    </div>` : ''}
+
+    <div class="thread-msgs">
+      ${c.total > c.mensagens.length
+        ? `<div class="bolha sistema">mostrando as últimas ${c.mensagens.length} de ${c.total} mensagens</div>` : ''}
+      ${c.mensagens.map((m) => bolha(m, false)).join('') ||
+        '<div class="bolha sistema">nenhuma mensagem trocada ainda</div>'}
+    </div>
+
+    ${c.sugestoes?.length ? `
+      <div class="sugestoes">
+        <h4>💡 Sugestões de resposta
+          <span style="text-transform:none;letter-spacing:0;font-weight:500">
+            — clique para usar e editar antes de enviar
+          </span>
+        </h4>
+        ${c.sugestoes.map((s, i) => `
+          <div class="sugestao" data-sugestao="${i}">
+            <div class="t">
+              ${esc(s.titulo)}
+              <span class="tom" style="background:${CORES_TOM[s.tom]}18;color:${CORES_TOM[s.tom]}">${esc(s.tom)}</span>
+            </div>
+            <div class="texto">${esc(s.texto)}</div>
+            <div class="porque">Por quê: ${esc(s.porque)}</div>
+          </div>`).join('')}
+      </div>` : ''}
+
+    <div class="compositor">
+      <textarea id="compositor" rows="2" placeholder="Escreva a resposta…  (Enter envia, Shift+Enter quebra linha)"></textarea>
+      <button class="btn primario" data-acao="enviar-resposta">Enviar</button>
+    </div>`;
+}
+
+function threadDeGrupo(c) {
+  const g = c.grupo;
+  return `
+    <div class="thread-topo">
+      <button class="btn voltar-lista" data-acao="voltar-lista" title="Voltar">‹</button>
+      <span class="avatar" style="background:${corDoNome(g.nome)};border-radius:50%">${esc(iniciais(g.nome))}</span>
+      <div style="min-width:0">
+        <div style="font-weight:650;letter-spacing:-.01em">${esc(g.nome)}</div>
+        <div style="font-size:11.5px;color:var(--tinta-3)">${num(g.membros)} membros</div>
+      </div>
+      <div style="margin-left:auto">
+        <button class="btn" data-abrir-grupo="${g.id}">Ver as pessoas</button>
+      </div>
+    </div>
+
+    ${c.alertas?.length ? `<div class="alerta" style="margin:12px 16px 0;border-radius:0 9px 9px 0">
+      <b>${c.alertas.length} alerta(s) recente(s) neste grupo.</b>
+      ${esc(c.alertas[0].titulo)}
+    </div>` : ''}
+
+    <div class="thread-msgs">
+      ${c.mensagens.map((m) => bolha(m, true)).join('') ||
+        '<div class="bolha sistema">nenhuma mensagem capturada ainda neste grupo</div>'}
+    </div>
+
+    <div class="compositor">
+      <textarea id="compositor" rows="2" placeholder="Escrever no grupo…"></textarea>
+      <button class="btn primario" data-acao="enviar-resposta">Enviar</button>
+    </div>`;
+}
+
+function formatarTel(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  if (d.length < 12) return tel || '';
+  const resto = d.slice(4);
+  return `+${d.slice(0, 2)} (${d.slice(2, 4)}) ${resto.length > 8 ? resto.slice(0, 5) : resto.slice(0, 4)}-${resto.length > 8 ? resto.slice(5) : resto.slice(4)}`;
+}
+
+async function enviarResposta() {
+  const campo = $('#compositor');
+  const alvo = estado.conversaAberta;
+  if (!campo?.value.trim() || !alvo) return;
+  const texto = campo.value.trim();
+  const botao = $('[data-acao="enviar-resposta"]');
+
+  campo.disabled = true;
+  if (botao) { botao.disabled = true; botao.textContent = 'enviando…'; }
+
+  const r = await api(`/conversas/${alvo.tipo === 'grupo' ? 'grupo' : 'pessoa'}/${alvo.id}/responder`,
+    { method: 'POST', body: { texto } });
+
+  if (r.erro) {
+    toast('Não foi possível enviar', r.erro, 'critico');
+    campo.disabled = false;
+    if (botao) { botao.disabled = false; botao.textContent = 'Enviar'; }
+    return;
+  }
+  await render();
+}
+
+// ============================================================ ALERTAS
+const ICONE_ALERTA = {
+  saiu_grupo: ['🚪', '#f59e0b'],
+  removido_grupo: ['⛔', '#dc2626'],
+  entrou_grupo: ['👋', '#16a34a'],
+  atrito: ['⚡', '#dc2626']
+};
+
+VISTAS.alertas = async () => {
+  const { itens, contagem } = await api('/alertas?limite=120');
+  const wa = await api('/whatsapp/status');
+  pintarAlertas(contagem);
+
+  const conectado = wa.status === 'conectado';
+  const atrito = itens.filter((a) => a.tipo.startsWith('atrito:') || a.tipo === 'conflito_grupo');
+  const criticosAbertos = itens.filter((a) => !a.lido && a.gravidade === 'critico');
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Alertas</h2>
+        <p>Conflito, saída e entrada nos grupos — em tempo real, com o que fazer em cada caso.</p>
+      </div>
+      <div class="acoes">
+        ${contagem.total ? '<button class="btn" data-acao="ler-alertas">Marcar tudo como lido</button>' : ''}
+        <button class="btn" data-vista="conexao">${conectado ? '🟢 WhatsApp Conectado' : '🔌 WhatsApp'}</button>
+      </div>
+    </div>
+
+    ${criticosAbertos.length ? `
+      <div class="alerta" style="margin-bottom:16px">
+        <b>${criticosAbertos.length} alerta(s) de prioridade esperando resposta.</b>
+        Atrito não resolvido no privado vira saída — e, no pior caso, denúncia do número da campanha.
+      </div>` : ''}
+
+    ${atrito.length ? `<div class="grade g-kpi" style="margin-bottom:16px">
+      ${kpi('Sinais de atrito', num(atrito.length), 'detectados nas conversas')}
+      ${kpi('Prioridade', num(atrito.filter((a) => a.gravidade === 'critico').length), 'exigem contato no privado')}
+      ${kpi('Pessoas envolvidas', num(new Set(atrito.map((a) => a.pessoa_id).filter(Boolean)).size), 'marcadas com "Atenção / atrito"')}
+    </div>` : ''}
+
+    ${itens.length ? '' : `
+      <div class="alerta ${conectado ? 'sucesso' : 'info'}">
+        ${conectado
+          ? `🟢 <b>WhatsApp conectado (${esc(wa.telefone || 'Ativo')}).</b> Nenhum alerta registrado no momento.<br>O sistema está monitorando os grupos. Quando ocorrer qualquer movimentação (participante entrar, sair ou for removido), o alerta aparecerá aqui em tempo real.`
+          : `<b>Nenhum alerta ainda.</b> Assim que o WhatsApp estiver conectado, toda entrada e saída de participante nos grupos aparece aqui.`
+        }
+      </div>`}
+
+    <section class="card">
+      ${itens.map((a) => {
+        // `def` vem do dicionário de risco no servidor; o mapa local é só fallback.
+        const [iconePadrao, corPadrao] = ICONE_ALERTA[a.tipo] || ['🔔', '#64748b'];
+        const icone = a.def?.icone || iconePadrao;
+        const cor = a.def?.cor || corPadrao;
+        const d = a.dados || {};
+        return `
+        <div class="alerta-linha ${a.lido ? '' : 'nao-lido'}" ${a.pessoa_id ? `data-pessoa="${a.pessoa_id}"` : ''}>
+          <span class="icone" style="background:${cor}18;color:${cor}">${icone}</span>
+          <span style="min-width:0;flex:1">
+            <div class="t">${esc(a.titulo)}</div>
+            <div class="d">${esc(a.detalhe || '')}</div>
+            ${d.contexto ? `<div class="d" style="color:var(--tinta-4)">${esc(d.contexto)}</div>` : ''}
+            ${a.acao ? `<div class="acao-alerta" style="border-color:${cor}">
+              <b>O que fazer:</b> ${esc(a.acao)}
+            </div>` : ''}
+            ${d.assinou?.length ? `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+              ${d.assinou.map((t) => chip(t.length > 40 ? `${t.slice(0, 40)}…` : t, '#5b21b6')).join('')}
+            </div>` : ''}
+          </span>
+          <span class="q">
+            ${a.gravidade === 'critico' ? '<span class="faixa-badge" style="background:#fee2e2;color:#b91c1c;margin-right:8px">prioridade</span>' : ''}
+            ${quando(a.ts)}
+          </span>
+        </div>`;
+      }).join('')}
+    </section>`;
+};
+
+// ============================================================ ABAIXO-ASSINADOS
+VISTAS.abaixos = async () => {
+  const abaixos = await api('/abaixos');
+  const total = abaixos.reduce((s, a) => s + a.assinaturas, 0);
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Abaixo-assinados</h2>
+        <p>${num(total)} assinaturas captadas por anúncio. Cada uma vira uma ficha e um tema de interesse.</p>
+      </div>
+      <div class="acoes">
+        <button class="btn" data-acao="importar-leads">⬆ Importar novos CSV</button>
+        <a class="btn" href="/api/export.csv?cadastro=sim">⬇ Exportar assinantes</a>
+      </div>
+    </div>
+
+    <div class="grade g-3">
+      ${abaixos.map((a) => `
+        <section class="card">
+          <div class="corpo abaixo-card">
+            <div>
+              ${a.bandeira ? chip(a.bandeira, '#5b21b6') : ''}
+              <div class="titulo" style="margin-top:8px">${esc(a.titulo)}</div>
+            </div>
+            <div class="numeros">
+              <div><b>${num(a.assinaturas)}</b> assinaturas</div>
+              <div><b>${num(a.ja_no_grupo)}</b> no grupo</div>
+              <div><b>${num(a.assinaturas - a.ja_no_grupo)}</b> fora</div>
+            </div>
+            <div>
+              <div class="barra"><i style="width:${(a.ja_no_grupo / (a.assinaturas || 1)) * 100}%;background:var(--verde)"></i></div>
+              <div class="sub" style="margin-top:5px;color:var(--tinta-4)">
+                ${Math.round((a.ja_no_grupo / (a.assinaturas || 1)) * 100)}% dos assinantes já entraram num grupo
+              </div>
+            </div>
+            <div class="linha-dado"><span class="k">Origem</span><span class="v">${num(a.assinaturas - a.instagram)} Facebook · ${num(a.instagram)} Instagram</span></div>
+            <div class="linha-dado"><span class="k">Período</span><span class="v">${dataCurta(a.primeira)} → ${dataCurta(a.ultima)}</span></div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">${a.temas.map((t) => chip(t.rotulo, t.cor)).join('')}</div>
+            <button class="btn" style="width:100%;justify-content:center" data-filtro-abaixo="${esc(a.chave)}">
+              Ver as ${num(a.assinaturas)} pessoas
+            </button>
+          </div>
+        </section>`).join('')}
+    </div>`;
+};
+
+// ============================================================ FIREBASE
+VISTAS.firebase = async () => {
+  const s = await api('/firebase/status');
+  pintarFirebase(s);
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Firebase — base de produção</h2>
+        <p>${s.conectado
+          ? `Conectado ao projeto <b>${esc(s.projeto)}</b>`
+          : 'Os dados ficam na fila local até a credencial ser configurada. Nada se perde.'}</p>
+      </div>
+      <div class="acoes">
+        <button class="btn" data-acao="fb-enviar" ${s.pendentes ? '' : 'disabled'}>⬆ Enviar fila (${num(s.pendentes)})</button>
+        <button class="btn primario" data-acao="fb-sync">↻ Sincronizar tudo</button>
+      </div>
+    </div>
+
+    <div class="grade g-2">
+      <div style="display:grid;gap:16px;align-content:start">
+        <div class="grade g-kpi">
+          ${kpi('Status', s.conectado ? 'Conectado' : s.configurado ? 'Erro' : 'Aguardando', s.projeto ? esc(s.projeto) : 'projeto não configurado')}
+          ${kpi('Na fila', num(s.pendentes), 'documentos esperando envio')}
+          ${kpi('Enviados', num(s.enviados), s.ultimoEnvio ? `último ${quando(s.ultimoEnvio)}` : 'nesta sessão')}
+        </div>
+
+        ${s.erro ? `<div class="alerta"><b>Firebase:</b> ${esc(s.erro)}</div>` : ''}
+        ${s.erros?.length ? `<div class="alerta">${s.erros.map((e) => `${esc(e.erro)} <b>(${e.n}×)</b>`).join('<br>')}</div>` : ''}
+
+        <section class="card">
+          <header><h3>O que vai para o Firestore</h3></header>
+          <div class="corpo">
+            <div class="linha-dado"><span class="k">pessoas</span><span class="v">ficha completa, uma por telefone — perfil, interesse, tags, grupos e assinaturas juntos</span></div>
+            <div class="linha-dado"><span class="k">assinaturas</span><span class="v">cada lead do Meta, com anúncio e plataforma de origem</span></div>
+            <div class="linha-dado"><span class="k">abaixos</span><span class="v">os abaixo-assinados e seus totais</span></div>
+            <div class="linha-dado"><span class="k">grupos</span><span class="v">grupos do WhatsApp e tamanho</span></div>
+            <div class="linha-dado"><span class="k">alertas</span><span class="v">saídas e entradas de grupo</span></div>
+            <div class="linha-dado"><span class="k">eventos</span><span class="v">linha do tempo de cada pessoa</span></div>
+            <div class="linha-dado"><span class="k">mensagens</span><span class="v">só se <code>FIRESTORE_ESPELHAR_MENSAGENS=true</code> — volume alto</span></div>
+            <p style="font-size:12px;color:var(--tinta-3);line-height:1.55;margin:14px 0 0">
+              O SQLite local continua sendo o motor de cálculo (score, cruzamentos, filtros).
+              O Firestore é onde o dado <b>mora</b>: compartilhado com a equipe, com backup do
+              Google e acessível por qualquer app que você fizer depois.
+            </p>
+          </div>
+        </section>
+      </div>
+
+      <section class="card">
+        <header><h3>Como ligar (5 minutos)</h3></header>
+        <div class="corpo passo-firebase">
+          <ol class="passos">
+            <li>Acesse <b>console.firebase.google.com</b> e crie um projeto (ex.: <i>rede-apoio-claudia</i>).</li>
+            <li>No menu, abra <b>Firestore Database → Criar banco de dados</b>. Escolha o modo de produção e a região <b>southamerica-east1</b>.</li>
+            <li>Vá em <b>⚙ Configurações do projeto → Contas de serviço → Gerar nova chave privada</b>. Baixa um arquivo <code>.json</code>.</li>
+            <li>Salve esse arquivo como <code>data/firebase-key.json</code> dentro da pasta do sistema.</li>
+            <li>Copie <code>.env.example</code> para <code>.env</code> (o caminho já vem preenchido) e reinicie o servidor.</li>
+            <li>Volte aqui e clique em <b>Sincronizar tudo</b>.</li>
+          </ol>
+          <div class="codigo">cp .env.example .env</div>
+          <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.55;margin:4px 0 0">
+            Para publicar as regras de segurança e os índices (já prontos no projeto):
+          </p>
+          <div class="codigo">npx firebase-tools deploy --only firestore</div>
+          <div class="alerta info" style="margin-top:6px">
+            As regras em <code>firestore.rules</code> bloqueiam <b>todo</b> acesso de cliente.
+            Só o servidor escreve, e a leitura exige um usuário com a claim <code>equipe</code>.
+            Isso é o mínimo para uma base de dado pessoal com finalidade política.
+          </div>
+          <div class="alerta">
+            <b>Nunca versione</b> <code>data/firebase-key.json</code> nem os CSV de leads —
+            o <code>.gitignore</code> já cobre os dois.
+          </div>
+        </div>
+      </section>
+    </div>`;
+};
+
+// ============================================================ GRUPOS
+VISTAS.grupos = async () => {
+  const grupos = await api('/grupos');
+  const fila = await api('/fila-adicao');
+  const wa = await api('/whatsapp/status');
+  const conectado = wa.status === 'conectado';
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Grupos monitorados</h2>
+        <p>${grupos.length
+          ? `${grupos.length} grupo(s) sendo lidos ao mesmo tempo — o sistema cruza quem está em mais de um.`
+          : conectado
+            ? 'WhatsApp conectado. Aguardando sincronização dos grupos.'
+            : 'Nenhum grupo ainda. Os grupos aparecem sozinhos assim que o WhatsApp for conectado.'}</p>
+      </div>
+      <div class="acoes"><button class="btn ${grupos.length ? '' : 'primario'}" data-vista="conexao">${conectado ? '🟢 WhatsApp Conectado' : '🔌 Conectar WhatsApp'}</button></div>
+    </div>
+    ${grupos.length ? '' : `
+      <div class="alerta ${conectado ? 'sucesso' : 'info'}">
+        ${conectado
+          ? `🟢 <b>WhatsApp conectado (${esc(wa.telefone || 'Ativo')}).</b> O sistema está acompanhando mensagens, reações e saídas dos grupos.`
+          : `Ao ler o QR Code, o sistema importa automaticamente os grupos, participantes e passa a acompanhar mensagens, reações e saídas.`
+        }
+      </div>`}
+
+    ${painelDaFila(fila)}
+
+    <div class="grade g-4">
+      ${grupos.map((g) => `
+        <section class="card">
+          <div class="corpo">
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px">
+              <span class="avatar" style="background:${corDoNome(g.nome)};border-radius:12px">${esc(iniciais(g.nome))}</span>
+              <div>
+                <div style="font-weight:650;letter-spacing:-.01em">${esc(g.nome)}</div>
+                <div class="sub" style="color:var(--tinta-4);font-size:11.5px">${esc(g.descricao || '')}</div>
+              </div>
+            </div>
+            <div class="linha-dado"><span class="k">Membros</span><span class="v">${num(g.membros)}</span></div>
+            <div class="linha-dado"><span class="k">Falaram em 7 dias</span><span class="v">${num(g.ativos_7d)} <span style="color:var(--tinta-4);font-weight:400">(${Math.round((g.ativos_7d / (g.membros || 1)) * 100)}%)</span></span></div>
+            <div class="linha-dado"><span class="k">Mensagens</span><span class="v">${num(g.mensagens)} <span style="color:var(--tinta-4);font-weight:400">· ${num(g.mensagens_7d)} na semana</span></span></div>
+            <div class="linha-dado"><span class="k">Última atividade</span><span class="v">${quando(g.ultima_msg) || '—'}</span></div>
+            <div style="display:flex;gap:7px;margin-top:12px">
+              <button class="btn" style="flex:1;justify-content:center" data-abrir-grupo="${g.id}">Ver pessoas</button>
+              <button class="btn primario" style="flex:1;justify-content:center" data-adicionar="${g.id}">➕ Adicionar</button>
+            </div>
+          </div>
+        </section>`).join('')}
+    </div>`;
+};
+
+// ---------------------------------------- fila de adição (painel + gaveta)
+function painelDaFila(f) {
+  const total = f.pendentes + f.adicionados + f.convidados + f.falharam;
+  if (!total) return '';
+
+  const feitos = f.adicionados + f.convidados;
+  const pct = Math.round((feitos / (total || 1)) * 100);
+  const est = f.estado;
+  const parada = est.pausada || est.impedimento;
+
+  return `
+    <section class="card" style="margin-bottom:16px">
+      <header>
+        <h3>Fila de adição aos grupos</h3>
+        <span class="dica">${f.feitosHoje}/${f.limites.porDia} hoje · restam ${f.restamHoje}</span>
+      </header>
+      <div class="corpo">
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+          <span class="chip" style="background:${parada ? '#fef3c7' : '#dcfce7'};color:${parada ? '#92400e' : '#166534'}">
+            ${parada ? `⏸ ${esc(est.motivoPausa || est.impedimento)}` : '▶ em andamento'}
+          </span>
+          ${f.pendentes && !parada && est.proximoEm
+            ? `<span class="sub">próxima em ${Math.max(0, Math.round((est.proximoEm - Date.now()) / 1000))}s</span>` : ''}
+          ${f.pendentes ? `<span class="sub">término estimado: ${esc(f.estimativa || '—')}</span>` : ''}
+          <span style="margin-left:auto;display:flex;gap:7px">
+            ${est.pausada
+              ? '<button class="btn primario" data-acao="fila-retomar">Retomar</button>'
+              : '<button class="btn" data-acao="fila-pausar">Pausar</button>'}
+            ${f.pendentes ? '<button class="btn" data-acao="fila-cancelar">Cancelar pendentes</button>' : ''}
+          </span>
+        </div>
+
+        <div class="barra" style="height:9px"><i style="width:${pct}%;background:var(--verde)"></i></div>
+
+        <div style="display:flex;gap:20px;margin-top:12px;flex-wrap:wrap;font-size:12px;color:var(--tinta-3)">
+          <span><b style="color:var(--verde);font-size:16px">${num(f.adicionados)}</b> adicionadas</span>
+          <span><b style="color:var(--azul);font-size:16px">${num(f.convidados)}</b> convidadas por link</span>
+          <span><b style="color:var(--tinta);font-size:16px">${num(f.pendentes)}</b> na fila</span>
+          ${f.falharam ? `<span><b style="color:#dc2626;font-size:16px">${num(f.falharam)}</b> não deu</span>` : ''}
+        </div>
+
+        ${f.itens?.filter((i) => i.situacao === 'falhou').length ? `
+          <details style="margin-top:12px">
+            <summary style="cursor:pointer;font-size:12px;color:var(--tinta-3)">ver quem não deu certo</summary>
+            <div style="margin-top:8px">
+              ${f.itens.filter((i) => i.situacao === 'falhou').slice(0, 15).map((i) => `
+                <div class="linha-dado">
+                  <span class="k" style="width:auto;flex:1">${esc(i.pessoa)}</span>
+                  <span class="v" style="font-weight:400;color:var(--tinta-3)">${esc(i.erro || '')}</span>
+                </div>`).join('')}
+            </div>
+          </details>` : ''}
+      </div>
+    </section>`;
+}
+
+async function abrirAdicionar(grupoId) {
+  const grupos = await api('/grupos');
+  const grupo = grupos.find((g) => g.id === grupoId);
+  estado.panorama ??= await api('/panorama');
+  estado.adicionar = { grupoId, filtros: { somenteSemGrupo: 'sim', somenteAssinantes: 'sim', abaixo: '', uf: 'SP', cidade: '' } };
+
+  gaveta.classList.add('aberto');
+  overlay.classList.add('aberto');
+  await desenharAdicionar(grupo);
+}
+
+async function desenharAdicionar(grupo) {
+  const { grupoId, filtros } = estado.adicionar;
+  const q = new URLSearchParams(Object.entries(filtros).filter(([, v]) => v)).toString();
+  const previa = await api(`/grupos/${grupoId}/elegiveis?${q}`);
+  const f = await api(`/fila-adicao?grupo=${grupoId}`);
+  const minutos = Math.round((previa.total * (f.limites.intervaloMin + f.limites.intervaloMax) / 2) / 60);
+  const dias = Math.ceil(previa.total / f.limites.porDia);
+
+  const opcoes = (lista, atual, vazio) =>
+    `<option value="">${vazio}</option>` +
+    lista.map(([v, r]) => `<option value="${esc(v)}" ${atual === v ? 'selected' : ''}>${esc(r)}</option>`).join('');
+
+  gaveta.innerHTML = `
+    <div class="topo">
+      <span class="avatar" style="background:${corDoNome(grupo.nome)};border-radius:50%">${esc(iniciais(grupo.nome))}</span>
+      <div style="min-width:0">
+        <div style="font-size:16px;font-weight:660;letter-spacing:-.02em">Adicionar ao grupo</div>
+        <div style="font-size:12.5px;color:var(--tinta-3)">${esc(grupo.nome)} · ${num(grupo.membros)} membros</div>
+      </div>
+      <button class="fechar" data-acao="fechar-gaveta">✕</button>
+    </div>
+
+    <div class="rolagem">
+      <div class="bloco">
+        <h4>Quem entra na fila</h4>
+        <div class="campo">
+          <label>Abaixo-assinado</label>
+          <select id="ad-abaixo">${opcoes(estado.panorama.abaixos.map((a) => [a.chave, a.titulo]), filtros.abaixo, 'Qualquer um')}</select>
+        </div>
+        <div class="grade" style="grid-template-columns:1fr 1.4fr;gap:10px">
+          <div class="campo">
+            <label>Estado</label>
+            <select id="ad-uf">${opcoes(estado.panorama.ufs.map((u) => [u.uf, `${u.uf} (${u.n})`]), filtros.uf, 'Todos')}</select>
+          </div>
+          <div class="campo">
+            <label>Cidade (opcional)</label>
+            <input id="ad-cidade" value="${esc(filtros.cidade)}" placeholder="Ex.: Campinas">
+          </div>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;font-size:12.5px;margin-bottom:7px">
+          <input type="checkbox" id="ad-semgrupo" ${filtros.somenteSemGrupo ? 'checked' : ''}>
+          Só quem ainda não está em nenhum grupo
+        </label>
+        <label style="display:flex;gap:8px;align-items:center;font-size:12.5px">
+          <input type="checkbox" id="ad-assinantes" ${filtros.somenteAssinantes ? 'checked' : ''}>
+          Só quem assinou algum abaixo-assinado
+        </label>
+      </div>
+
+      <div class="bloco destaque">
+        <h4>Prévia</h4>
+        <div style="font-size:30px;font-weight:680;letter-spacing:-.03em">${num(previa.total)}</div>
+        <div style="font-size:12.5px;color:var(--tinta-3);margin-bottom:12px">pessoa(s) elegíveis para este grupo</div>
+        ${previa.amostra.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${previa.amostra.slice(0, 8).map((p) => chip(p.nome.split(' ').slice(0, 2).join(' '), '#5b21b6')).join('')}
+          ${previa.total > 8 ? `<span class="sub" style="align-self:center">e mais ${num(previa.total - 8)}</span>` : ''}
+        </div>` : '<p class="vazio">Ninguém corresponde a esses filtros.</p>'}
+        ${previa.total ? `
+          <div class="campo" style="margin-top:14px">
+            <label>Quantas adicionar agora</label>
+            <input id="ad-limite" type="number" min="1" max="${previa.total}" value="${previa.total}">
+          </div>` : ''}
+      </div>
+
+      <div class="bloco">
+        <h4>Como isso vai acontecer</h4>
+        <div class="alerta" style="margin-bottom:12px">
+          <b>Não dá para adicionar 100 pessoas de uma vez.</b> Foi exatamente isso que
+          derrubou seu número antes — o WhatsApp bloqueia por comportamento, e nenhuma
+          biblioteca contorna. O que dá para fazer é o que este painel faz: você clica
+          <b>uma vez</b> e o sistema adiciona sozinho, devagar, por horas.
+        </div>
+        <div class="linha-dado"><span class="k">Ritmo</span><span class="v">1 pessoa a cada ${f.limites.intervaloMin}–${f.limites.intervaloMax}s (aleatório)</span></div>
+        <div class="linha-dado"><span class="k">Teto</span><span class="v">${f.limites.porDia}/dia · ${f.limites.porHora}/hora</span></div>
+        <div class="linha-dado"><span class="k">Horário</span><span class="v">${f.limites.horaInicio}h às ${f.limites.horaFim}h</span></div>
+        <div class="linha-dado"><span class="k">Pausa longa</span><span class="v">${f.limites.pausaLongaMin} min a cada ${f.limites.pausaLongaACada} pessoas</span></div>
+        <div class="linha-dado"><span class="k">Segurança</span><span class="v">para sozinho após ${f.limites.falhasSeguidasParaPausar} erros seguidos</span></div>
+        ${previa.total ? `<div class="linha-dado"><span class="k">Vai levar</span><span class="v" style="color:var(--roxo);font-weight:620">
+          ${dias > 1 ? `~${dias} dias` : `~${minutos} min`}</span></div>` : ''}
+        <p style="font-size:12px;color:var(--tinta-3);line-height:1.55;margin:12px 0 0">
+          Quem tiver a privacidade fechada não pode ser adicionada direto — para essas,
+          o sistema manda o <b>link de convite no privado</b>, com o motivo explicado.
+          Pode fechar esta janela: a fila continua rodando em segundo plano.
+        </p>
+      </div>
+
+      ${previa.total ? `
+        <button class="btn primario" style="width:100%;justify-content:center;padding:12px"
+                data-acao="fila-enfileirar">
+          Adicionar ${num(previa.total)} pessoa(s) com segurança
+        </button>` : ''}
+    </div>`;
+
+  for (const [id, chave] of [['#ad-abaixo', 'abaixo'], ['#ad-uf', 'uf'], ['#ad-cidade', 'cidade']]) {
+    const el = $(id, gaveta);
+    el?.addEventListener('change', () => {
+      estado.adicionar.filtros[chave] = el.value;
+      desenharAdicionar(grupo);
+    });
+  }
+  for (const [id, chave] of [['#ad-semgrupo', 'somenteSemGrupo'], ['#ad-assinantes', 'somenteAssinantes']]) {
+    const el = $(id, gaveta);
+    el?.addEventListener('change', () => {
+      estado.adicionar.filtros[chave] = el.checked ? 'sim' : '';
+      desenharAdicionar(grupo);
+    });
+  }
+}
+
+// ============================================================ CONEXÃO
+VISTAS.conexao = async () => {
+  const s = estado.whatsapp = await api('/whatsapp/status');
+  const rotulo = {
+    desconectado: 'Desconectado', conectando: 'Conectando…', qr: 'Aguardando leitura do QR',
+    conectado: 'Conectado', erro: 'Erro'
+  }[s.status] || s.status;
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Conectar o WhatsApp</h2>
+        <p>Status atual: <b>${rotulo}</b>${s.telefone ? ` · número ${esc(s.telefone)}` : ''}</p>
+      </div>
+      <div class="acoes">
+        ${s.status === 'conectado'
+          ? `<button class="btn" data-acao="wa-sincronizar">↻ Sincronizar grupos</button>
+             <button class="btn" data-acao="wa-desconectar">Desconectar</button>`
+          : '<button class="btn primario" data-acao="wa-conectar">Gerar QR Code</button>'}
+      </div>
+    </div>
+
+    <div class="grade g-2">
+      <section class="card">
+        <header><h3>${s.status === 'conectado' ? 'Conexão ativa' : 'Leia o QR com o celular âncora'}</h3></header>
+        <div class="corpo">
+          ${s.disponivel === false ? `
+            <div class="alerta">
+              <b>Falta instalar a biblioteca de conexão.</b><br>
+              O painel funciona em modo demonstração. Para plugar o WhatsApp de verdade, rode na pasta do projeto:
+            </div>
+            <div class="codigo" style="margin-top:12px">npm install @whiskeysockets/baileys qrcode</div>
+            <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.55;margin-bottom:0">
+              Depois reinicie o servidor e clique em <b>Gerar QR Code</b>.
+            </p>
+          ` : s.qr ? `
+            <div class="qr-caixa">
+              <img src="${s.qr}" alt="QR Code do WhatsApp">
+              <p style="font-size:12.5px;color:var(--tinta-3);max-width:340px;margin:0">
+                No celular que já está nos grupos: <b>WhatsApp → Dispositivos conectados → Conectar dispositivo</b>.
+                O QR expira em ~40 segundos e é renovado sozinho.
+              </p>
+            </div>
+          ` : s.status === 'conectado' ? `
+            <div class="qr-caixa">
+              <div style="font-size:46px">✅</div>
+              <p style="margin:0;font-weight:600">Ouvindo ${s.grupos.length} grupo(s) em tempo real</p>
+              <p style="font-size:12.5px;color:var(--tinta-3);margin:0">
+                ${num(s.recebidas)} mensagem(ns) capturada(s) nesta sessão${s.ultimaMensagem ? ` · última ${quando(s.ultimaMensagem.ts)}` : ''}
+              </p>
+              <div style="display:grid;gap:6px;width:100%;margin-top:10px">
+                ${s.grupos.map((g) => `<div class="linha-dado"><span class="k" style="width:auto;flex:1">${esc(g.nome)}</span><span class="v">${num(g.membros)} membros</span></div>`).join('')}
+              </div>
+            </div>
+          ` : `
+            <div class="qr-caixa">
+              <div style="font-size:46px">📱</div>
+              <p style="margin:0;color:var(--tinta-3);font-size:13px;max-width:330px">
+                Clique em <b>Gerar QR Code</b> e escaneie com o celular que já participa dos cinco grupos.
+              </p>
+              ${s.erro ? `<div class="alerta" style="text-align:left">${esc(s.erro)}</div>` : ''}
+            </div>`}
+        </div>
+      </section>
+
+      <div style="display:grid;gap:16px;align-content:start">
+        <section class="card">
+          <header><h3>Como funciona</h3></header>
+          <div class="corpo">
+            <ol class="passos">
+              <li>O sistema entra como <b>dispositivo conectado</b> — o mesmo mecanismo do WhatsApp Web. O celular continua funcionando normal.</li>
+              <li>Ao conectar, ele lê a lista dos grupos e de todos os participantes, criando uma ficha por telefone.</li>
+              <li>Cada mensagem, resposta e reação nova alimenta o perfil em tempo real.</li>
+              <li>O link do abaixo-assinado costura nome, cidade e atuação ao telefone que já está na base.</li>
+            </ol>
+          </div>
+        </section>
+
+        <section class="card">
+          <header><h3>O que você precisa saber</h3></header>
+          <div class="corpo" style="display:grid;gap:10px">
+            <div class="alerta">
+              <b>Use um número dedicado da campanha.</b> Essa integração não é oficial do WhatsApp:
+              contas que disparam em massa podem ser bloqueadas. Aqui o sistema só <i>escuta</i>,
+              o que é bem mais seguro — mas o número da candidata não deve ser o âncora.
+            </div>
+            <div class="alerta info">
+              <b>LGPD.</b> Você está tratando dado pessoal com finalidade política.
+              O ideal é: aviso no grupo de que ele é monitorado pela equipe, link do cadastro
+              com consentimento explícito, e um responsável pela base. Exclusão a pedido do titular
+              deve ser possível — o botão existe na ficha de cada pessoa.
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header><h3>Formulário do abaixo-assinado</h3></header>
+          <div class="corpo">
+            <p style="font-size:12.5px;color:var(--tinta-3);margin:0 0 10px;line-height:1.55">
+              Mande esse link nos grupos. Quem preenche vira ficha completa automaticamente,
+              casada pelo telefone com quem já está no grupo.
+            </p>
+            <div class="codigo">${location.origin}/cadastro</div>
+            <a class="btn" style="margin-top:10px" href="/cadastro" target="_blank">Abrir formulário ↗</a>
+          </div>
+        </section>
+      </div>
+    </div>`;
+};
+
+// ------------------------------------------------------------------- a ficha
+async function abrirPessoa(id) {
+  gaveta.innerHTML = '<div class="carregando">carregando ficha…</div>';
+  gaveta.classList.add('aberto');
+  overlay.classList.add('aberto');
+
+  const x = estado.pessoaAberta = await api(`/pessoas/${id}`);
+  const tags = estado.panorama?.tags || await api('/tags');
+  const cor = corDoNome(x.exibicao);
+  const partes = x.score_detalhe?.partes || {};
+  const rotulosScore = {
+    volume: 'Fala', recencia: 'Recência', interacao: 'Interage',
+    influencia: 'É respondida', alcance: 'Alcance'
+  };
+  const maxSemana = Math.max(1, ...x.atividade_semanal);
+  const maxTema = Math.max(1, ...x.temas.map((t) => t.score));
+
+  const dado = (k, v, falta) => `
+    <div class="linha-dado"><span class="k">${k}</span>
+      <span class="v ${v ? '' : 'falta'}">${v ? esc(v) : falta}</span></div>`;
+
+  gaveta.innerHTML = `
+    <div class="topo">
+      <span class="avatar" style="background:${cor};width:46px;height:46px;font-size:16px;border-radius:13px">${esc(iniciais(x.exibicao))}</span>
+      <div style="min-width:0">
+        <div style="font-size:17px;font-weight:660;letter-spacing:-.02em">${esc(x.exibicao)}</div>
+        <div style="font-size:12.5px;color:var(--tinta-3);font-variant-numeric:tabular-nums">${esc(x.telefone_fmt)}</div>
+        <div style="display:flex;gap:5px;margin-top:7px;flex-wrap:wrap">
+          ${badgeFaixa(x.faixa)}
+          ${x.tags.map((t) => chip(t.nome, t.cor)).join('')}
+        </div>
+      </div>
+      <button class="fechar" data-acao="fechar-gaveta">✕</button>
+    </div>
+
+    <div class="rolagem">
+      <div class="bloco destaque">
+        <h4>Próxima ação sugerida</h4>
+        <p style="margin:0;font-size:13.5px;font-weight:560;line-height:1.5">${esc(x.proxima_acao || '—')}</p>
+        <div style="display:flex;gap:9px;align-items:center;margin-top:13px">
+          <span class="barra" style="flex:1"><i style="width:${x.completude}%;background:${x.completude >= 70 ? 'var(--verde)' : x.completude >= 40 ? 'var(--laranja)' : '#ef4444'}"></i></span>
+          <span style="font-size:12px;color:var(--tinta-3);white-space:nowrap">ficha ${x.completude}% completa</span>
+        </div>
+      </div>
+
+      <div class="bloco" id="bloco-cadastro">
+        <h4>Cadastro (abaixo-assinado)</h4>
+        ${dado('Nome', x.nome, 'não preencheu')}
+        ${dado('Cidade', x.cidade, 'não preencheu')}
+        ${dado('Bairro', x.bairro, '—')}
+        ${dado('Atuação', x.atuacao, 'não preencheu')}
+        ${dado('E-mail', x.email, '—')}
+        ${dado('Assinou em', x.cadastro_em ? dataCurta(x.cadastro_em) : null, 'ainda não assinou')}
+        ${dado('Nome no WhatsApp', x.nome_wa, 'sem nome salvo')}
+        ${x.observacoes ? `
+          <div style="margin-top:12px;padding:11px 13px;background:#fffbeb;border-radius:9px;
+                      border-left:3px solid var(--laranja);font-size:12.5px;line-height:1.55">
+            <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+                        color:#92400e;font-weight:650;margin-bottom:5px">O que ela escreveu</div>
+            ${esc(x.observacoes)}
+          </div>` : ''}
+        <button class="btn" style="margin-top:11px;width:100%;justify-content:center" data-acao="editar">✎ Completar ficha manualmente</button>
+      </div>
+
+      ${x.abaixos.length ? `
+      <div class="bloco">
+        <h4>Abaixo-assinados que assinou (${x.abaixos.length})</h4>
+        ${x.abaixos.map((a) => `
+          <div style="padding:9px 0;border-bottom:1px solid var(--linha)">
+            <div style="font-weight:560;line-height:1.4">${esc(a.titulo)}</div>
+            <div class="sub" style="color:var(--tinta-4);margin-top:3px">
+              ${dataCurta(a.criado_em)} · ${esc(a.plataforma || 'anúncio')}${a.anuncio ? ` · ${esc(a.anuncio.slice(0, 46))}` : ''}
+            </div>
+          </div>`).join('')}
+      </div>` : ''}
+
+      <div class="bloco">
+        <h4>Classificação · ${x.engajamento}/100</h4>
+        ${Object.entries(rotulosScore).map(([chave, rot]) => {
+          const maximo = estado.config.pesos[chave];
+          const valor = partes[chave] || 0;
+          return `<div class="score-linha">
+            <span>${rot}</span>
+            <span class="barra"><i style="width:${(valor / maximo) * 100}%;background:${corFaixa(x.faixa)}"></i></span>
+            <span class="n">${valor}/${maximo}</span>
+          </div>`;
+        }).join('')}
+        <div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--tinta-3);flex-wrap:wrap">
+          <span><b style="color:var(--tinta)">${num(x.msgs_total)}</b> mensagens</span>
+          <span><b style="color:var(--tinta)">${num(x.msgs_30d)}</b> em 30d</span>
+          <span><b style="color:var(--tinta)">${num(x.reacoes_recebidas)}</b> reações recebidas</span>
+          <span><b style="color:var(--tinta)">${num(x.respostas_recebidas)}</b> respostas recebidas</span>
+        </div>
+        <h4 style="margin-top:16px">Atividade · 12 semanas</h4>
+        <div class="sparkline">
+          ${x.atividade_semanal.map((v, i) => `<i class="${i >= 9 ? 'forte' : ''}" style="height:${Math.max(4, (v / maxSemana) * 100)}%" title="${v} mensagens"></i>`).join('')}
+        </div>
+      </div>
+
+      <div class="bloco">
+        <h4>Interesse — o que ela fala</h4>
+        ${x.intencoes_rotulos.length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:13px">
+          ${x.intencoes_rotulos.map((i) => chip(i.rotulo, i.cor)).join('')}</div>` : ''}
+        ${x.temas.length ? `<div class="barras-h">
+          ${x.temas.slice(0, 7).map((t) => `
+            <div class="barra-h" style="cursor:default">
+              <span class="rot">${esc(t.rotulo)}</span>
+              <span class="barra"><i style="width:${(t.score / maxTema) * 100}%;background:${t.cor}"></i></span>
+              <span class="n">${t.mencoes}×</span>
+            </div>`).join('')}</div>`
+          : '<p class="vazio">Ainda não escreveu o suficiente para o sistema entender o interesse dela.</p>'}
+      </div>
+
+      <div class="bloco">
+        <h4>Grupos (${x.grupos.length})</h4>
+        ${x.grupos.map((g) => `<div class="linha-dado">
+          <span class="k" style="width:auto;flex:1">${esc(g.nome)}</span>
+          <span class="v">${g.admin ? '<span class="chip" style="background:#ede9fe;color:#5b21b6">admin</span>' : ''} desde ${dataCurta(g.entrou_em)}</span>
+        </div>`).join('') || '<p class="vazio">Sem grupo.</p>'}
+        <h4 style="margin-top:16px">Marcações da equipe</h4>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${tags.map((t) => {
+            const tem = x.tags.some((y) => y.id === t.id);
+            return `<span class="chip clicavel" data-tag="${t.id}" data-remover="${tem ? 1 : 0}"
+              style="background:${tem ? t.cor + '20' : '#f1f5f9'};color:${tem ? t.cor : '#94a3b8'};border-color:${tem ? t.cor + '40' : 'transparent'}">
+              ${tem ? '✓ ' : '+ '}${esc(t.nome)}</span>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="bloco">
+        <h4>Últimas mensagens</h4>
+        ${x.mensagens.map((m) => `
+          <div class="msg-item">
+            <div>${m.texto ? esc(m.texto) : `<span class="vazio">${esc(m.tipo)}</span>`}</div>
+            <div class="meta">
+              <span>${esc(m.grupo || '')}</span><span>${quando(m.ts)}</span>
+              ${m.reacoes ? `<span>❤ ${m.reacoes}</span>` : ''}
+              ${m.respostas ? `<span>↩ ${m.respostas} resposta(s)</span>` : ''}
+            </div>
+          </div>`).join('') || '<p class="vazio">Nunca escreveu nos grupos.</p>'}
+      </div>
+
+      <div class="bloco">
+        <h4>Linha do tempo</h4>
+        <div class="campo">
+          <textarea id="nova-nota" rows="2" placeholder="Anotar algo sobre essa pessoa…"></textarea>
+        </div>
+        <button class="btn" style="margin-bottom:14px" data-acao="salvar-nota">Salvar anotação</button>
+        <div class="timeline">
+          ${x.timeline.map((e) => `
+            <div class="ev ${esc(e.tipo)}">
+              <div>${esc(e.descricao)}</div>
+              <div class="quando">${dataCurta(e.ts)} · ${quando(e.ts)}</div>
+            </div>`).join('') || '<p class="vazio">Sem eventos.</p>'}
+        </div>
+      </div>
+    </div>`;
+}
+
+function formularioEdicao() {
+  const x = estado.pessoaAberta;
+  const campo = (id, rot, valor, tipo = 'text') =>
+    `<div class="campo"><label>${rot}</label><input id="ed-${id}" type="${tipo}" value="${esc(valor || '')}"></div>`;
+
+  const bloco = $('#bloco-cadastro', gaveta);
+  bloco.innerHTML = `
+    <h4>Completar ficha</h4>
+    ${campo('nome', 'Nome completo', x.nome)}
+    ${campo('cidade', 'Cidade', x.cidade)}
+    ${campo('bairro', 'Bairro', x.bairro)}
+    ${campo('atuacao', 'Atuação / profissão', x.atuacao)}
+    ${campo('email', 'E-mail', x.email, 'email')}
+    <div class="campo"><label>Observações</label><textarea id="ed-observacoes" rows="3">${esc(x.observacoes || '')}</textarea></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn primario" data-acao="salvar-ficha">Salvar</button>
+      <button class="btn" data-acao="cancelar-edicao">Cancelar</button>
+    </div>`;
+}
+
+function fecharGaveta() {
+  gaveta.classList.remove('aberto');
+  overlay.classList.remove('aberto');
+  estado.pessoaAberta = null;
+}
+
+// ------------------------------------------------------------------- eventos
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+document.addEventListener('click', async (e) => {
+  const alvo = (sel) => e.target.closest(sel);
+
+  const nav = alvo('[data-vista]');
+  if (nav) { irPara(nav.dataset.vista); return; }
+
+  if (alvo('[data-acao="fechar-gaveta"]')) return fecharGaveta();
+
+  // --- caixa de entrada ---------------------------------------------------
+  const conversa = alvo('[data-conversa]');
+  if (conversa) {
+    estado.conversaAberta = { tipo: conversa.dataset.conversa, id: Number(conversa.dataset.id) };
+    estado.inbox.mostrandoThread = true;   // no celular, troca a lista pela conversa
+    return render();
+  }
+
+  if (alvo('[data-acao="voltar-lista"]')) {
+    estado.inbox.mostrandoThread = false;
+    return render();
+  }
+
+  const aba = alvo('[data-aba]');
+  if (aba) {
+    estado.inbox.filtro = aba.dataset.aba;
+    return render();
+  }
+
+  const sugestao = alvo('[data-sugestao]');
+  if (sugestao) {
+    // Nunca envia sozinho: joga no campo para a equipe revisar.
+    const campo = $('#compositor');
+    if (campo) {
+      campo.value = $('.texto', sugestao).textContent.trim();
+      campo.focus();
+      campo.setSelectionRange(campo.value.length, campo.value.length);
+    }
+    return;
+  }
+
+  if (alvo('[data-acao="enviar-resposta"]')) return enviarResposta();
+
+  // --- fila de adição ------------------------------------------------------
+  const adicionar = alvo('[data-adicionar]');
+  if (adicionar) return abrirAdicionar(Number(adicionar.dataset.adicionar));
+
+  if (alvo('[data-acao="fila-pausar"]')) { await api('/fila-adicao/pausar', { method: 'POST' }); return render(); }
+  if (alvo('[data-acao="fila-retomar"]')) { await api('/fila-adicao/retomar', { method: 'POST' }); return render(); }
+  if (alvo('[data-acao="fila-cancelar"]')) {
+    const r = await api('/fila-adicao/cancelar', { method: 'POST', body: {} });
+    toast('Fila', `${r.cancelados} pendente(s) cancelado(s).`);
+    return render();
+  }
+
+  if (alvo('[data-acao="fila-enfileirar"]')) {
+    const b = alvo('[data-acao="fila-enfileirar"]');
+    b.disabled = true; b.textContent = 'enfileirando…';
+    const { grupoId, filtros } = estado.adicionar;
+    const limite = Number($('#ad-limite')?.value) || null;
+    const r = await api(`/grupos/${grupoId}/adicionar`, { method: 'POST', body: { filtros, limite } });
+    if (r.erro) { toast('Não deu', r.erro, 'critico'); return; }
+    fecharGaveta();
+    toast('Fila criada',
+      `${r.enfileirados} pessoa(s) na fila do grupo ${r.grupo}. Término estimado: ${r.estimativa}.`);
+    return render();
+  }
+
+  const pessoa = alvo('[data-pessoa]');
+  if (pessoa) return abrirPessoa(Number(pessoa.dataset.pessoa));
+
+  const pag = alvo('[data-pagina]');
+  if (pag && !pag.disabled) { estado.filtros.pagina = Number(pag.dataset.pagina); return render(); }
+
+  const faixa = alvo('[data-filtro-faixa]');
+  if (faixa) { estado.filtros = { ...estado.filtros, faixa: faixa.dataset.filtroFaixa, pagina: 1 }; return irPara('pessoas'); }
+
+  const tema = alvo('[data-filtro-tema]');
+  if (tema) { estado.filtros = { ...estado.filtros, tema: tema.dataset.filtroTema, pagina: 1 }; return irPara('pessoas'); }
+
+  const intencao = alvo('[data-filtro-intencao]');
+  if (intencao) { estado.filtros = { ...estado.filtros, intencao: intencao.dataset.filtroIntencao, pagina: 1 }; return irPara('pessoas'); }
+
+  const grupo = alvo('[data-abrir-grupo]');
+  if (grupo) { estado.filtros = { ...estado.filtros, grupo: grupo.dataset.abrirGrupo, pagina: 1 }; return irPara('pessoas'); }
+
+  const abaixo = alvo('[data-filtro-abaixo]');
+  if (abaixo) { estado.filtros = { ...estado.filtros, abaixo: abaixo.dataset.filtroAbaixo, pagina: 1 }; return irPara('pessoas'); }
+
+  const uf = alvo('[data-filtro-uf]');
+  if (uf) { estado.filtros = { ...estado.filtros, uf: uf.dataset.filtroUf, pagina: 1 }; return irPara('pessoas'); }
+
+  if (alvo('[data-acao="ler-alertas"]')) {
+    pintarAlertas(await api('/alertas/lidos', { method: 'POST', body: { todos: true } }));
+    return render();
+  }
+
+  if (alvo('[data-acao="importar-leads"]')) {
+    const b = alvo('[data-acao="importar-leads"]');
+    b.disabled = true; b.textContent = 'importando…';
+    const r = await api('/leads/importar', { method: 'POST' });
+    estado.panorama = null;
+    if (r.erro) toast('Importação', r.erro, 'critico');
+    else toast('Importação concluída',
+      `${r.total.importados} assinaturas · ${r.total.novos} pessoas novas · ${r.total.repetidos} já existiam`);
+    return render();
+  }
+
+  if (alvo('[data-acao="fb-sync"]') || alvo('[data-acao="fb-enviar"]')) {
+    const b = alvo('[data-acao="fb-sync"]') || alvo('[data-acao="fb-enviar"]');
+    const tudo = b.dataset.acao === 'fb-sync';
+    b.disabled = true; b.textContent = 'enviando…';
+    const r = await api(tudo ? '/firebase/sincronizar' : '/firebase/enviar', { method: 'POST' });
+    if (r.status?.conectado) toast('Firebase', `${r.enviados || 0} documento(s) enviados.`);
+    else toast('Firebase', r.status?.erro || 'Credencial não configurada — a fila continua guardada.', 'critico');
+    return render();
+  }
+
+  if (alvo('[data-acao="limpar-filtros"]')) {
+    estado.filtros = { busca: '', faixa: '', grupo: '', tema: '', intencao: '', cadastro: '', tag: '', abaixo: '', uf: '', semGrupo: '', ordenar: 'engajamento', pagina: 1, porPagina: 25 };
+    return render();
+  }
+
+  if (alvo('[data-acao="recalcular"]')) {
+    const b = alvo('[data-acao="recalcular"]');
+    b.disabled = true; b.textContent = 'recalculando…';
+    await api('/recalcular', { method: 'POST' });
+    estado.panorama = null;
+    return render();
+  }
+
+  if (alvo('[data-acao="editar"]')) return formularioEdicao();
+  if (alvo('[data-acao="cancelar-edicao"]')) return abrirPessoa(estado.pessoaAberta.id);
+
+  if (alvo('[data-acao="salvar-ficha"]')) {
+    const val = (id) => $(`#ed-${id}`).value.trim();
+    await api(`/pessoas/${estado.pessoaAberta.id}`, {
+      method: 'PATCH',
+      body: {
+        nome: val('nome'), cidade: val('cidade'), bairro: val('bairro'),
+        atuacao: val('atuacao'), email: val('email'), observacoes: val('observacoes')
+      }
+    });
+    const id = estado.pessoaAberta.id;
+    estado.panorama = null;
+    await abrirPessoa(id);
+    return render();
+  }
+
+  if (alvo('[data-acao="salvar-nota"]')) {
+    const texto = $('#nova-nota').value.trim();
+    if (!texto) return;
+    await api(`/pessoas/${estado.pessoaAberta.id}/nota`, { method: 'POST', body: { texto } });
+    return abrirPessoa(estado.pessoaAberta.id);
+  }
+
+  const tag = alvo('[data-tag]');
+  if (tag && estado.pessoaAberta) {
+    await api(`/pessoas/${estado.pessoaAberta.id}/tags`, {
+      method: 'POST',
+      body: { tagId: Number(tag.dataset.tag), remover: tag.dataset.remover === '1' }
+    });
+    return abrirPessoa(estado.pessoaAberta.id);
+  }
+
+  if (alvo('[data-acao="wa-conectar"]')) {
+    const b = alvo('[data-acao="wa-conectar"]');
+    b.disabled = true; b.textContent = 'gerando…';
+    await api('/whatsapp/conectar', { method: 'POST' });
+    return render();
+  }
+  if (alvo('[data-acao="wa-desconectar"]')) {
+    await api('/whatsapp/desconectar', { method: 'POST', body: { apagarSessao: true } });
+    return render();
+  }
+  if (alvo('[data-acao="wa-sincronizar"]')) {
+    const b = alvo('[data-acao="wa-sincronizar"]');
+    b.disabled = true; b.textContent = 'sincronizando…';
+    await api('/whatsapp/sincronizar', { method: 'POST' });
+    estado.panorama = null;
+    return render();
+  }
+});
+
+overlay.addEventListener('click', fecharGaveta);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharGaveta(); });
+
+function irPara(vista) {
+  if (!VISTAS[vista]) return;
+  estado.vista = vista;
+  for (const b of document.querySelectorAll('#nav .nav-item')) {
+    b.classList.toggle('ativo', b.dataset.vista === vista);
+  }
+  render();
+}
+
+async function render() {
+  try {
+    await VISTAS[estado.vista]();
+  } catch (erro) {
+    conteudo.innerHTML = `<div class="alerta">Falha ao carregar: ${esc(erro.message)}</div>`;
+  }
+}
+
+// --------------------------------------------------------- status ao vivo
+function pintarAlertas(contagem) {
+  const alvo = $('#conta-alertas');
+  if (!alvo || !contagem) return;
+  const total = contagem.total || 0;
+  alvo.textContent = total;
+  alvo.dataset.zero = total ? '0' : '1';
+}
+
+function pintarConversas(contagem) {
+  const alvo = $('#conta-conversas');
+  if (!alvo || !contagem) return;
+  const n = contagem.naoLidas || 0;
+  alvo.textContent = n;
+  alvo.dataset.zero = n ? '0' : '1';
+}
+
+function pintarFirebase(s) {
+  const ponto = $('#ponto-firebase');
+  const texto = $('#texto-firebase');
+  if (!ponto) return;
+  if (s.conectado) {
+    ponto.className = 'ponto on';
+    texto.textContent = s.pendentes ? `firebase · ${s.pendentes} na fila` : 'firebase sincronizado';
+  } else if (s.configurado) {
+    ponto.className = 'ponto err';
+    texto.textContent = 'firebase com erro';
+  } else {
+    ponto.className = 'ponto';
+    texto.textContent = `firebase · ${s.pendentes} na fila`;
+  }
+}
+
+function toast(titulo, detalhe, gravidade = 'aviso', aoClicar = null) {
+  const el = document.createElement('div');
+  el.className = `aviso-toast ${gravidade}`;
+  el.innerHTML = `<div class="t">${esc(titulo)}</div>${detalhe ? `<div class="d">${esc(detalhe)}</div>` : ''}`;
+  el.addEventListener('click', () => { el.remove(); aoClicar?.(); });
+  $('#avisos').append(el);
+  setTimeout(() => el.remove(), gravidade === 'critico' ? 15000 : 8000);
+}
+
+function pintarStatus(s) {
+  const ponto = $('#ponto-status');
+  const texto = $('#texto-status');
+  const mapa = {
+    conectado: ['on', `conectado · ${s.telefone || ''}`],
+    qr: ['qr', 'aguardando QR'],
+    conectando: ['qr', 'conectando…'],
+    erro: ['err', 'modo demonstração'],
+    desconectado: ['', 'modo demonstração']
+  };
+  const [classe, rotulo] = mapa[s.status] || ['', s.status];
+  ponto.className = `ponto ${classe}`;
+  texto.textContent = rotulo;
+}
+
+const fluxo = new EventSource('/api/eventos');
+fluxo.onmessage = (e) => {
+  const evento = JSON.parse(e.data);
+
+  if (evento.tipo === 'status') {
+    api('/whatsapp/status').then((s) => {
+      pintarStatus(s);
+      if (estado.vista === 'conexao') render();
+    });
+  }
+
+  // Saída de grupo: o aviso que a equipe precisa ver na hora.
+  if (evento.tipo === 'alerta') {
+    const a = evento.alerta;
+    toast(a.titulo, a.detalhe, a.gravidade, () => irPara('alertas'));
+    api('/alertas?limite=1').then((r) => pintarAlertas(r.contagem));
+    if (estado.vista === 'alertas') render();
+  }
+
+  // Mensagem privada chegando: a caixa de entrada precisa reagir na hora.
+  if (evento.tipo === 'privada') {
+    api('/conversas?filtro=nao_lidas').then((r) => pintarConversas(r.contagem));
+    if (estado.vista === 'conversas') render();
+    else if (!evento.deMim) toast('Nova mensagem no privado', evento.previa, 'aviso', () => irPara('conversas'));
+  }
+
+  if (evento.tipo === 'mensagem' && estado.vista === 'conversas') render();
+
+  if (evento.tipo === 'fila_progresso') {
+    const feito = evento.resultado === 'adicionado' ? 'adicionada ao' : 'convidada para o';
+    toast('Fila de adição', `${evento.pessoa} ${feito} grupo ${evento.grupo}.`);
+    if (estado.vista === 'grupos') render();
+  }
+  if (evento.tipo === 'fila_estado' && estado.vista === 'grupos') render();
+
+  if (evento.tipo === 'recalculado' || evento.tipo === 'grupos_sincronizados' ||
+      evento.tipo === 'membros_alterados') {
+    estado.panorama = null;
+    if (!['conexao', 'firebase', 'conversas'].includes(estado.vista)) render();
+  }
+};
+
+setInterval(() => {
+  api('/firebase/status').then(pintarFirebase).catch(() => {});
+}, 20000);
+
+(async function iniciar() {
+  estado.config = await api('/config');
+  pintarStatus(await api('/whatsapp/status'));
+  pintarFirebase(await api('/firebase/status'));
+  api('/alertas?limite=1').then((r) => pintarAlertas(r.contagem));
+  api('/conversas?filtro=nao_lidas').then((r) => pintarConversas(r.contagem));
+  await render();
+})();

@@ -1,0 +1,31 @@
+{
+  "name": "rede-apoio-whatsapp",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "CRM de rede de apoio no WhatsApp - perfilamento de membros de grupos para campanha eleitoral",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning src/server.js",
+    "dev": "node --no-warnings=ExperimentalWarning --watch src/server.js",
+    "importar": "node --no-warnings=ExperimentalWarning src/importar-leads.js",
+    "producao": "node --no-warnings=ExperimentalWarning src/importar-leads.js --limpar",
+    "firebase:sync": "node --no-warnings=ExperimentalWarning src/sincronizar-firebase.js",
+    "firebase:previa": "node --no-warnings=ExperimentalWarning src/sincronizar-firebase.js --teste",
+    "riscos": "node --no-warnings=ExperimentalWarning src/reprocessar-riscos.js",
+    "filtrar-uf": "node --no-warnings=ExperimentalWarning src/filtrar-uf.js",
+    "teste": "node --no-warnings=ExperimentalWarning src/teste-firestore.js && node --no-warnings=ExperimentalWarning src/teste-alertas.js && node --no-warnings=ExperimentalWarning src/teste-risco.js && node --no-warnings=ExperimentalWarning src/teste-conversa.js && node --no-warnings=ExperimentalWarning src/teste-adicao.js",
+    "teste:conversa": "node --no-warnings=ExperimentalWarning src/teste-conversa.js",
+    "teste:adicao": "node --no-warnings=ExperimentalWarning src/teste-adicao.js",
+    "teste:risco": "node --no-warnings=ExperimentalWarning src/teste-risco.js",
+    "teste:firestore": "node --no-warnings=ExperimentalWarning src/teste-firestore.js",
+    "teste:alertas": "node --no-warnings=ExperimentalWarning src/teste-alertas.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "firebase-admin": "^14.2.0",
+    "qrcode": "^1.5.4"
+  }
+}

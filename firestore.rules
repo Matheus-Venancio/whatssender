@@ -1,0 +1,67 @@
+rules_version = '2';
+
+// Base de apoiadores — dado pessoal com finalidade política (LGPD).
+// Regra de ouro: NADA é público. O painel escreve pelo Admin SDK (conta de
+// serviço), que ignora estas regras; elas existem para bloquear qualquer
+// acesso vindo de app cliente, web ou chave vazada.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Equipe autorizada: usuários com custom claim `equipe: true`.
+    // Defina com admin.auth().setCustomUserClaims(uid, { equipe: true }).
+    function daEquipe() {
+      return request.auth != null && request.auth.token.equipe == true;
+    }
+
+    function coordenacao() {
+      return daEquipe() && request.auth.token.papel == 'coordenacao';
+    }
+
+    // Fichas dos apoiadores: leitura pela equipe, escrita só pelo servidor.
+    match /pessoas/{telefone} {
+      allow read: if daEquipe();
+      allow write: if false;
+    }
+
+    match /grupos/{jid} {
+      allow read: if daEquipe();
+      allow write: if false;
+    }
+
+    match /abaixos/{chave} {
+      allow read: if daEquipe();
+      allow write: if false;
+    }
+
+    // Assinaturas contêm o dado bruto do lead — só a coordenação vê.
+    match /assinaturas/{leadId} {
+      allow read: if coordenacao();
+      allow write: if false;
+    }
+
+    match /eventos/{id} {
+      allow read: if daEquipe();
+      allow write: if false;
+    }
+
+    match /alertas/{id} {
+      allow read: if daEquipe();
+      allow write: if false;
+    }
+
+    // Histórico de mensagens de grupo: o mais sensível da base.
+    match /mensagens/{id} {
+      allow read: if coordenacao();
+      allow write: if false;
+    }
+
+    match /_saude/{doc} {
+      allow read, write: if false;
+    }
+
+    // Qualquer coleção não prevista fica fechada.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

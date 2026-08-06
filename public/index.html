@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rede de Apoio · Inteligência de WhatsApp</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%235b21b6'/><text y='68' x='50' text-anchor='middle' font-size='54' fill='white' font-family='sans-serif'>R</text></svg>">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="lateral">
+      <div class="marca">
+        <div class="selo">R</div>
+        <div>
+          <h1>Rede de Apoio</h1>
+          <span>Inteligência de WhatsApp</span>
+        </div>
+      </div>
+
+      <nav id="nav">
+        <button class="nav-item ativo" data-vista="panorama">📊 Panorama</button>
+        <button class="nav-item" data-vista="conversas">💬 Conversas <span class="conta alerta" id="conta-conversas" data-zero="1">0</span></button>
+        <button class="nav-item" data-vista="pessoas">👥 Pessoas <span class="conta" id="conta-pessoas">–</span></button>
+        <button class="nav-item" data-vista="fila">🎯 Fila de ação</button>
+        <button class="nav-item" data-vista="alertas">🔔 Alertas <span class="conta alerta" id="conta-alertas">0</span></button>
+        <button class="nav-item" data-vista="abaixos">✍️ Abaixo-assinados <span class="conta" id="conta-abaixos">–</span></button>
+        <button class="nav-item" data-vista="grupos">💬 Grupos <span class="conta" id="conta-grupos">–</span></button>
+        <div class="nav-sep">Infraestrutura</div>
+        <button class="nav-item" data-vista="conexao">🔌 WhatsApp</button>
+        <button class="nav-item" data-vista="firebase">🔥 Firebase</button>
+      </nav>
+
+      <div class="rodape">
+        <div class="conexao-mini">
+          <span class="ponto" id="ponto-status"></span>
+          <span id="texto-status">verificando…</span>
+        </div>
+        <div class="conexao-mini" style="margin-top:6px">
+          <span class="ponto" id="ponto-firebase"></span>
+          <span id="texto-firebase">firebase…</span>
+        </div>
+        <p class="aviso-lgpd">
+          Dados pessoais tratados para fins de mobilização política.
+          Base de titulares com direito a acesso e exclusão (LGPD art. 18).
+        </p>
+      </div>
+    </aside>
+
+    <main class="conteudo" id="conteudo">
+      <div class="carregando">carregando…</div>
+    </main>
+  </div>
+
+  <div class="overlay" id="overlay"></div>
+  <aside class="gaveta" id="gaveta"></aside>
+  <div class="avisos" id="avisos"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

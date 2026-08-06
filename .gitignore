@@ -1,0 +1,11 @@
+node_modules/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+data/auth/
+data/firebase-key.json
+.env
+
+# Os CSVs de leads contêm dado pessoal — não versionar.
+data/leads/*.csv

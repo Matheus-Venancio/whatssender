@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assine o abaixo-assinado · Rede de Apoio</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { background: linear-gradient(160deg, #f5f3ff, #eff6ff 55%, #f6f7fb); }
+    .folha { max-width: 520px; margin: 0 auto; padding: 34px 20px 60px; }
+    .topo-form { text-align: center; margin-bottom: 22px; }
+    .topo-form .selo {
+      width: 54px; height: 54px; border-radius: 16px; margin: 0 auto 14px;
+      background: linear-gradient(135deg, #5b21b6, #2563eb); color: #fff;
+      display: grid; place-items: center; font-size: 24px; font-weight: 700;
+    }
+    .topo-form h1 { font-size: 22px; margin: 0 0 8px; letter-spacing: -.02em; }
+    .topo-form p { margin: 0; color: var(--tinta-3); font-size: 13.5px; line-height: 1.55; }
+    .consentimento { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; color: var(--tinta-3); line-height: 1.5; margin: 4px 0 16px; }
+    .consentimento input { margin-top: 2px; }
+    .sucesso { text-align: center; padding: 36px 20px; }
+    .sucesso .icone { font-size: 52px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="folha">
+    <div class="topo-form">
+      <div class="selo">R</div>
+      <h1>Some à nossa rede de apoio</h1>
+      <p>Preencha em 30 segundos. É assim que a gente sabe quem você é,
+         onde você mora e no que dá pra somar.</p>
+    </div>
+
+    <section class="card" id="caixa">
+      <div class="corpo">
+        <form id="form">
+          <div class="campo">
+            <label for="nome">Nome completo *</label>
+            <input id="nome" name="nome" required autocomplete="name" placeholder="Como quer ser chamada(o)">
+          </div>
+          <div class="campo">
+            <label for="telefone">WhatsApp (com DDD) *</label>
+            <input id="telefone" name="telefone" required inputmode="tel" placeholder="(19) 99999-8888">
+          </div>
+          <div class="grade" style="grid-template-columns:1.3fr 1fr;gap:10px">
+            <div class="campo">
+              <label for="cidade">Cidade *</label>
+              <input id="cidade" name="cidade" required placeholder="Campinas">
+            </div>
+            <div class="campo">
+              <label for="bairro">Bairro</label>
+              <input id="bairro" name="bairro" placeholder="Ouro Verde">
+            </div>
+          </div>
+          <div class="campo">
+            <label for="atuacao">Sua atuação *</label>
+            <input id="atuacao" name="atuacao" required list="sugestoes"
+                   placeholder="Ex.: professora, comerciante, líder comunitária">
+            <datalist id="sugestoes">
+              <option>Autônoma</option><option>Comerciante</option><option>Professora</option>
+              <option>Agente comunitária de saúde</option><option>Dona de casa</option>
+              <option>Aposentado</option><option>Líder comunitária</option><option>Estudante</option>
+              <option>Servidor público</option><option>Empresária</option><option>Motorista de aplicativo</option>
+            </datalist>
+          </div>
+          <div class="campo">
+            <label for="email">E-mail (opcional)</label>
+            <input id="email" name="email" type="email" autocomplete="email">
+          </div>
+          <div class="campo">
+            <label for="observacoes">O que mais te preocupa hoje no seu bairro? (opcional)</label>
+            <textarea id="observacoes" name="observacoes" rows="3"
+                      placeholder="Escreva com suas palavras — isso ajuda a priorizar as pautas."></textarea>
+          </div>
+
+          <label class="consentimento">
+            <input type="checkbox" id="consentimento" required>
+            <span>Autorizo o uso dos meus dados para contato da campanha e organização
+              da rede de apoio. Posso pedir a exclusão a qualquer momento.</span>
+          </label>
+
+          <button class="btn primario" style="width:100%;justify-content:center;padding:12px" type="submit">
+            Assinar e entrar na rede
+          </button>
+          <p id="erro" class="alerta" style="display:none;margin-top:12px"></p>
+        </form>
+      </div>
+    </section>
+
+    <p style="font-size:11.5px;color:var(--tinta-4);text-align:center;margin-top:18px;line-height:1.5">
+      Seus dados ficam com a equipe da campanha e não são vendidos nem compartilhados.
+    </p>
+  </div>
+
+  <script>
+    const form = document.getElementById('form');
+    const caixa = document.getElementById('caixa');
+    const erro = document.getElementById('erro');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      erro.style.display = 'none';
+      const dados = Object.fromEntries(new FormData(form));
+      const botao = form.querySelector('button[type=submit]');
+      botao.disabled = true;
+      botao.textContent = 'enviando…';
+
+      try {
+        const r = await fetch('/api/cadastro', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dados)
+        });
+        const resposta = await r.json();
+        if (resposta.erro) throw new Error(resposta.erro);
+
+        caixa.innerHTML = `
+          <div class="sucesso">
+            <div class="icone">🎉</div>
+            <h2 style="margin:0 0 8px;font-size:19px">Assinatura registrada!</h2>
+            <p style="color:var(--tinta-3);font-size:13.5px;line-height:1.55;margin:0">
+              ${resposta.novo
+                ? 'Bem-vinda(o) à rede. Em breve a equipe entra em contato.'
+                : 'Reconhecemos seu número dos nossos grupos — sua ficha foi completada. Obrigado!'}
+            </p>
+          </div>`;
+      } catch (falha) {
+        erro.textContent = falha.message || 'Não foi possível enviar. Tente de novo.';
+        erro.style.display = 'block';
+        botao.disabled = false;
+        botao.textContent = 'Assinar e entrar na rede';
+      }
+    });
+  </script>
+</body>
+</html>
