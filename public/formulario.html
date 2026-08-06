@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Formulário de Apoio & Causas · Dra. Cláudia Camargo</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    :root {
+      --bg-grad: linear-gradient(155deg, #4c1d95 0%, #1e3a8a 50%, #0f172a 100%);
+      --card-bg: rgba(255, 255, 255, 0.96);
+      --roxo-primary: #6d28d9;
+    }
+    body {
+      background: var(--bg-grad);
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 24px 16px 60px;
+    }
+    .topo-header {
+      text-align: center;
+      color: #fff;
+      margin-bottom: 24px;
+    }
+    .topo-header .avatar-candidata {
+      width: 72px;
+      height: 72px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #a855f7, #3b82f6);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 32px;
+      font-weight: 800;
+      margin: 0 auto 14px;
+      box-shadow: 0 10px 25px -5px rgba(168, 85, 247, 0.5);
+    }
+    .topo-header h1 {
+      font-size: 24px;
+      font-weight: 750;
+      margin: 0 0 8px;
+      letter-spacing: -.02em;
+    }
+    .topo-header p {
+      margin: 0;
+      color: #cbd5e1;
+      font-size: 14.5px;
+      line-height: 1.5;
+    }
+    .card-form {
+      background: var(--card-bg);
+      border-radius: 20px;
+      padding: 28px 24px;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(10px);
+    }
+    .secao-titulo {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--roxo-primary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 20px 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .secao-titulo:first-child {
+      margin-top: 0;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 480px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      .card-form { padding: 20px 16px; }
+    }
+    .campo {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .campo label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #334155;
+    }
+    .campo input, .campo select, .campo textarea {
+      border: 1.5px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 11px 13px;
+      font-size: 14px;
+      background: #fff;
+      outline: none;
+      transition: all .15s ease;
+    }
+    .campo input:focus, .campo select:focus, .campo textarea:focus {
+      border-color: var(--roxo-primary);
+      box-shadow: 0 0 0 3px rgba(109, 40, 217, 0.15);
+    }
+    /* Grid de Pautas Selecionáveis */
+    .pautas-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .pauta-card {
+      position: relative;
+      cursor: pointer;
+    }
+    .pauta-card input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .pauta-box {
+      border: 1.5px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 10px;
+      background: #f8fafc;
+      text-align: center;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      height: 100%;
+      box-sizing: border-box;
+    }
+    .pauta-box .icone {
+      font-size: 24px;
+    }
+    .pauta-box .rotulo {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #334155;
+      line-height: 1.3;
+    }
+    .pauta-card input:checked + .pauta-box {
+      border-color: #6d28d9;
+      background: #f3e8ff;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(109, 40, 217, 0.2);
+    }
+    .pauta-card input:checked + .pauta-box .rotulo {
+      color: #5b21b6;
+    }
+
+    /* Cards de Engajamento (Opções Radio) */
+    .engajamento-grid {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .eng-card {
+      position: relative;
+      cursor: pointer;
+    }
+    .eng-card input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .eng-box {
+      border: 1.5px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: all 0.2s ease;
+    }
+    .eng-box .icon { font-size: 22px; }
+    .eng-box .txt .t { font-size: 13.5px; font-weight: 650; color: #1e293b; }
+    .eng-box .txt .d { font-size: 11.5px; color: #64748b; margin-top: 2px; }
+    .eng-card input:checked + .eng-box {
+      border-color: #2563eb;
+      background: #eff6ff;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+    }
+
+    .btn-enviar {
+      background: linear-gradient(135deg, #6d28d9, #2563eb);
+      color: #fff;
+      border: 0;
+      border-radius: 12px;
+      padding: 15px 20px;
+      font-size: 16px;
+      font-weight: 700;
+      width: 100%;
+      cursor: pointer;
+      box-shadow: 0 10px 20px -5px rgba(109, 40, 217, 0.4);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-enviar:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 24px -5px rgba(109, 40, 217, 0.5);
+    }
+    .btn-enviar:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .sucesso-caixa {
+      text-align: center;
+      padding: 20px 10px;
+    }
+    .sucesso-caixa .emoji { font-size: 54px; margin-bottom: 12px; }
+    .sucesso-caixa h2 { font-size: 22px; color: #0f172a; margin: 0 0 10px; }
+    .sucesso-caixa p { font-size: 14px; color: #475569; line-height: 1.55; margin: 0 0 20px; }
+    .card-grupo-recomendado {
+      background: #f0fdf4;
+      border: 2px solid #22c55e;
+      border-radius: 16px;
+      padding: 18px;
+      margin: 20px 0;
+      text-align: left;
+    }
+    .card-grupo-recomendado h3 { margin: 0 0 4px; font-size: 16px; color: #15803d; }
+    .card-grupo-recomendado p { margin: 0 0 14px; font-size: 12.5px; color: #166534; }
+    .btn-whatsapp {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: #25d366;
+      color: #fff;
+      font-weight: 700;
+      text-decoration: none;
+      padding: 13px 20px;
+      border-radius: 12px;
+      width: 100%;
+      box-sizing: border-box;
+      box-shadow: 0 8px 16px -4px rgba(37, 211, 102, 0.4);
+      font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topo-header">
+      <div class="avatar-candidata">C</div>
+      <h1>Rede de Apoio · Dra. Cláudia Camargo</h1>
+      <p>Diga-nos o que você defende e luta na sua cidade para conectarmos você às nossas causas e grupos de ação!</p>
+    </div>
+
+    <div class="card-form" id="caixa-form">
+      <form id="form-pautas">
+        <!-- Passo 1: Informações Pessoais -->
+        <div class="secao-titulo">👤 1. Seus Dados de Contato</div>
+        <div class="campo">
+          <label for="nome">Seu Nome Completo *</label>
+          <input type="text" id="nome" name="nome" required placeholder="Como gosta de ser chamada(o)" autocomplete="name">
+        </div>
+        <div class="campo">
+          <label for="telefone">WhatsApp (com DDD) *</label>
+          <input type="tel" id="telefone" name="telefone" required placeholder="(19) 99999-8888" autocomplete="tel" inputmode="tel">
+        </div>
+        <div class="grid-2">
+          <div class="campo">
+            <label for="cidade">Cidade *</label>
+            <input type="text" id="cidade" name="cidade" required placeholder="Ex.: Campinas" value="Campinas">
+          </div>
+          <div class="campo">
+            <label for="bairro">Bairro</label>
+            <input type="text" id="bairro" name="bairro" placeholder="Ex.: Ouro Verde">
+          </div>
+        </div>
+        <div class="campo">
+          <label for="atuacao">Sua Atuação / Profissão *</label>
+          <input type="text" id="atuacao" name="atuacao" required list="sugestoes-atuacao" placeholder="Ex.: Professora, Comerciante, Líder Comunitária">
+          <datalist id="sugestoes-atuacao">
+            <option value="Professora / Educadora">
+            <option value="Comerciante / Empreendedora">
+            <option value="Profissional da Saúde">
+            <option value="Líder Comunitária">
+            <option value="Dona de Casa">
+            <option value="Estudante">
+            <option value="Servidor Público">
+            <option value="Aposentado(a)">
+          </datalist>
+        </div>
+
+        <!-- Passo 2: Pautas e Lutas -->
+        <div class="secao-titulo">✊ 2. Quais pautas você defende e luta?</div>
+        <p style="font-size:12.5px;color:#64748b;margin:-6px 0 12px">Selecione uma ou mais causas prioritárias para você:</p>
+        
+        <div class="pautas-grid">
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="infancia_juventude" checked>
+            <div class="pauta-box">
+              <span class="icone">👶</span>
+              <span class="rotulo">Proteção da Infância</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="saude">
+            <div class="pauta-box">
+              <span class="icone">🧠</span>
+              <span class="rotulo">Saúde Mental & SUS</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="educacao">
+            <div class="pauta-box">
+              <span class="icone">📚</span>
+              <span class="rotulo">Valorização Educação</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="seguranca">
+            <div class="pauta-box">
+              <span class="icone">🛡️</span>
+              <span class="rotulo">Segurança nos Bairros</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="mulher">
+            <div class="pauta-box">
+              <span class="icone">♀️</span>
+              <span class="rotulo">Direitos das Mulheres</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="emprego_renda">
+            <div class="pauta-box">
+              <span class="icone">💼</span>
+              <span class="rotulo">Emprego & Comércio</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="animais">
+            <div class="pauta-box">
+              <span class="icone">🐾</span>
+              <span class="rotulo">Causa Animal</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="cultura_esporte">
+            <div class="pauta-box">
+              <span class="icone">⚽</span>
+              <span class="rotulo">Cultura & Esporte</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="pcd">
+            <div class="pauta-box">
+              <span class="icone">♿</span>
+              <span class="rotulo">Inclusão & PCD</span>
+            </div>
+          </label>
+          <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="idoso">
+            <div class="pauta-box">
+              <span class="icone">👵</span>
+              <span class="rotulo">Direitos da Pessoa Idosa</span>
+            </div>
+          </label>
+        </div>
+
+        <!-- Passo 3: Engajamento -->
+        <div class="secao-titulo">🎯 3. Como prefere somar na nossa campanha?</div>
+        <div class="engajamento-grid">
+          <label class="eng-card">
+            <input type="radio" name="intencao" value="voluntario" checked>
+            <div class="eng-box">
+              <span class="icon">🙋‍♂️</span>
+              <div class="txt">
+                <div class="t">Quero ser Voluntário(a)</div>
+                <div class="d">Ajudar em eventos, panfletagem e ações locais.</div>
+              </div>
+            </div>
+          </label>
+          <label class="eng-card">
+            <input type="radio" name="intencao" value="multiplicador">
+            <div class="eng-box">
+              <span class="icon">📢</span>
+              <div class="txt">
+                <div class="t">Quero ser Multiplicador(a)</div>
+                <div class="d">Divulgar conteúdos em redes sociais e grupos de WhatsApp.</div>
+              </div>
+            </div>
+          </label>
+          <label class="eng-card">
+            <input type="radio" name="intencao" value="lideranca">
+            <div class="eng-box">
+              <span class="icon">👑</span>
+              <div class="txt">
+                <div class="t">Sou Líder / Articulador(a)</div>
+                <div class="d">Lidero grupo de moradores, associação, comunidade ou categoria.</div>
+              </div>
+            </div>
+          </label>
+          <label class="eng-card">
+            <input type="radio" name="intencao" value="apoiador">
+            <div class="eng-box">
+              <span class="icon">🤝</span>
+              <div class="txt">
+                <div class="t">Quero Acompanhar & Apoiar</div>
+                <div class="d">Quero entrar nos grupos para acompanhar novidades e propostas.</div>
+              </div>
+            </div>
+          </label>
+        </div>
+
+        <!-- Passo 4: Observações / Demanda -->
+        <div class="secao-titulo">💬 4. O que mais te preocupa no seu bairro? (Opcional)</div>
+        <div class="campo">
+          <textarea id="observacoes" name="observacoes" rows="3" placeholder="Escreva sobre as melhorias que você mais luta para ver na sua região..."></textarea>
+        </div>
+
+        <button type="submit" class="btn-enviar" id="btn-submit">
+          🚀 Enviar e Ver Grupo Recomendado
+        </button>
+        <p id="erro-msg" class="alerta" style="display:none;margin-top:12px"></p>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('form-pautas');
+    const caixaForm = document.getElementById('caixa-form');
+    const erroMsg = document.getElementById('erro-msg');
+    const btnSubmit = document.getElementById('btn-submit');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      erroMsg.style.display = 'none';
+
+      const formData = new FormData(form);
+      const pautas = formData.getAll('pautas');
+
+      if (!pautas.length) {
+        erroMsg.textContent = 'Por favor, selecione pelo menos uma pauta que você defende!';
+        erroMsg.style.display = 'block';
+        return;
+      }
+
+      const payload = {
+        nome: formData.get('nome'),
+        telefone: formData.get('telefone'),
+        cidade: formData.get('cidade'),
+        bairro: formData.get('bairro'),
+        atuacao: formData.get('atuacao'),
+        pautas: pautas,
+        intencao: formData.get('intencao'),
+        observacoes: formData.get('observacoes')
+      };
+
+      btnSubmit.disabled = true;
+      btnSubmit.textContent = 'Gravando suas respostas…';
+
+      try {
+        const resp = await fetch('/api/formulario', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const res = await resp.json();
+
+        if (res.erro) throw new Error(res.erro);
+
+        const grupoNome = res.grupoRecomendado?.nome || 'Protegendo quem protege | Saúde';
+        const pautaFormatada = res.pautaPrincipal || 'Suas causas';
+
+        caixaForm.innerHTML = `
+          <div class="sucesso-caixa">
+            <div class="emoji">🎉</div>
+            <h2>Obrigado por somar com a gente, ${res.nome || payload.nome}!</h2>
+            <p>Suas pautas (<b>${res.pautasFormatadas || 'Causas Selecionadas'}</b>) foram registradas com sucesso na base de apoio da Dra. Cláudia Camargo!</p>
+
+            <div class="card-grupo-recomendado">
+              <h3>💬 Grupo Ideal Recomendado para Você:</h3>
+              <p>Com base na sua luta principal (<b>${pautaFormatada}</b>), conectamos você ao grupo temático ideal no WhatsApp:</p>
+              <h4 style="margin:0 0 10px;font-size:17px;color:#065f46">📌 ${grupoNome}</h4>
+              <a href="${res.linkWhatsApp || '#'}" class="btn-whatsapp" target="_blank">
+                💬 Entrar no Grupo do WhatsApp Agora
+              </a>
+            </div>
+
+            <p style="font-size:12.5px;color:#64748b;margin-top:16px">
+              Caso já esteja em nossos grupos, sua ficha foi automaticamente atualizada. Obrigado!
+            </p>
+          </div>
+        `;
+      } catch (falha) {
+        erroMsg.textContent = falha.message || 'Erro ao enviar o formulário. Tente novamente.';
+        erroMsg.style.display = 'block';
+        btnSubmit.disabled = false;
+        btnSubmit.textContent = '🚀 Enviar e Ver Grupo Recomendado';
+      }
+    });
+  </script>
+</body>
+</html>

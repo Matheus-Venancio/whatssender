@@ -106,6 +106,24 @@ CREATE TABLE IF NOT EXISTS temas_pessoa (
   PRIMARY KEY (pessoa_id, tema)
 );
 
+-- Pautas declaradas pela pessoa (formulário) — acumula acertos por tema.
+CREATE TABLE IF NOT EXISTS interesses (
+  pessoa_id INTEGER NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
+  tema      TEXT NOT NULL,
+  acertos   INTEGER NOT NULL DEFAULT 0,
+  ultimo_em INTEGER,
+  PRIMARY KEY (pessoa_id, tema)
+);
+
+-- Intenção declarada pela pessoa (apoiador, voluntário, demanda...).
+CREATE TABLE IF NOT EXISTS pessoa_intencoes (
+  pessoa_id INTEGER NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
+  intencao  TEXT NOT NULL,
+  peso      INTEGER NOT NULL DEFAULT 0,
+  ultimo_em INTEGER,
+  PRIMARY KEY (pessoa_id, intencao)
+);
+
 CREATE TABLE IF NOT EXISTS perfil (
   pessoa_id         INTEGER PRIMARY KEY REFERENCES pessoas(id) ON DELETE CASCADE,
   engajamento       REAL NOT NULL DEFAULT 0,

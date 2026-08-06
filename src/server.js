@@ -2,14 +2,14 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { db, PASTA_PUBLICA, agora, getConfig } from './db.js';
-import { salvarCadastro, registrarEvento } from './ingest.js';
+import { salvarCadastro, salvarFormularioPautas, registrarEvento } from './ingest.js';
 import { recomputar, PESOS, FAIXAS, CORES_FAIXA } from './scoring.js';
 import { TEMAS, INTENCOES } from './lexicon.js';
 import {
   listarPessoas, obterPessoa, listarGrupos, listarTags, listarAbaixos,
   listarAlertas, marcarAlertas, contarAlertas,
   listarConversas, conversaDeGrupo, marcarConversaLida, definirSituacao,
-  panorama, filaDeAcao, exportarCsv
+  panorama, filaDeAcao, exportarCsv, listarFormularios
 } from './repo.js';
 import { lerConversa, sugerirRespostas } from './conversa.js';
 import * as whatsapp from './whatsapp.js';
@@ -285,6 +285,21 @@ async function api(req, res, url) {
     }
   }
 
+  if (rota === '/formularios' && metodo === 'GET') return json(res, listarFormularios());
+
+  if (rota === '/formulario' && metodo === 'POST') {
+    const corpo = await lerCorpo(req);
+    try {
+      const r = salvarFormularioPautas(corpo);
+      recomputar();
+      firebase.publicarPessoa(r.pessoaId);
+      await firebase.processarFila();
+      return json(res, { ok: true, ...r });
+    } catch (erro) {
+      return json(res, { erro: erro.message }, 400);
+    }
+  }
+
   if (rota === '/recalcular' && metodo === 'POST') return json(res, recomputar());
 
   if (rota === '/export.csv' && metodo === 'GET') {
@@ -392,6 +407,7 @@ const servidor = createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname === '/' || url.pathname === '/painel') return servirArquivo(res, 'index.html');
     if (url.pathname === '/cadastro') return servirArquivo(res, 'cadastro.html');
+    if (url.pathname === '/formulario' || url.pathname === '/pesquisa') return servirArquivo(res, 'formulario.html');
     return servirArquivo(res, url.pathname);
   } catch (erro) {
     console.error('[erro]', erro);

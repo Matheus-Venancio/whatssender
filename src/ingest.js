@@ -1,5 +1,5 @@
 import { db, agora } from './db.js';
-import { classificarTexto } from './lexicon.js';
+import { TEMAS, INTENCOES, classificarTexto } from './lexicon.js';
 import { DDD_UF } from './leads.js';
 
 /** "5519999998888@s.whatsapp.net" -> "5519999998888" */
@@ -48,104 +48,30 @@ export function upsertGrupo({ jid, nome, descricao = null, criadoEm = agora() })
 }
 
 export function vincularMembro({ pessoaId, grupoId, entrouEm = agora(), admin = false, nomeGrupo = null }) {
-  const ja = db.prepare('SELECT 1 FROM membros WHERE pessoa_id = ? AND grupo_id = ?')
-    .get(pessoaId, grupoId);
+  const ja = db.prepare('SELECT saiu_em FROM membros WHERE pessoa_id = ? AND grupo_id = ?').get(pessoaId, grupoId);
   if (ja) {
-    db.prepare('UPDATE membros SET admin = ? WHERE pessoa_id = ? AND grupo_id = ?')
-      .run(admin ? 1 : 0, pessoaId, grupoId);
+    if (ja.saiu_em != null) {
+      db.prepare('UPDATE membros SET saiu_em = NULL, entrou_em = ? WHERE pessoa_id = ? AND grupo_id = ?')
+        .run(entrouEm, pessoaId, grupoId);
+      return true;
+    }
     return false;
   }
   db.prepare('INSERT INTO membros (pessoa_id, grupo_id, entrou_em, admin) VALUES (?, ?, ?, ?)')
     .run(pessoaId, grupoId, entrouEm, admin ? 1 : 0);
-  registrarEvento({
-    pessoaId,
-    tipo: 'entrou_grupo',
-    descricao: nomeGrupo ? `Entrou no grupo ${nomeGrupo}` : 'Entrou em um grupo',
-    ts: entrouEm
-  });
   return true;
 }
 
-export function registrarEvento({ pessoaId, tipo, descricao, ts = agora() }) {
-  db.prepare('INSERT INTO eventos (pessoa_id, tipo, descricao, ts) VALUES (?, ?, ?, ?)')
-    .run(pessoaId, tipo, descricao, ts);
-}
-
-/**
- * Cria um aviso para a equipe. O campo `dados` guarda o retrato da pessoa no
- * momento do evento — é o que diferencia "saiu um observador" de
- * "saiu uma embaixadora que assinou dois abaixo-assinados".
- */
-export function registrarAlerta({
-  tipo, gravidade = 'aviso', pessoaId = null, grupoId = null,
-  titulo, detalhe = null, dados = null, ts = agora()
-}) {
-  const r = db.prepare(`
-    INSERT INTO alertas (tipo, gravidade, pessoa_id, grupo_id, titulo, detalhe, dados, ts)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(tipo, gravidade, pessoaId, grupoId, titulo, detalhe,
-    dados ? JSON.stringify(dados) : null, ts);
-  return Number(r.lastInsertRowid);
-}
-
-/** Retrato usado dentro do alerta. */
-export function retratoDaPessoa(pessoaId) {
-  const p = db.prepare(`
-    SELECT p.nome, p.nome_wa, p.telefone, p.cidade, p.uf, p.atuacao, p.cadastro_em,
-           f.engajamento, f.faixa, f.msgs_total, f.ultima_msg_texto, f.ultima_msg_ts,
-           f.tema_principal, f.intencoes
-      FROM pessoas p LEFT JOIN perfil f ON f.pessoa_id = p.id WHERE p.id = ?
-  `).get(pessoaId);
-  if (!p) return null;
-
-  const assinou = db.prepare(`
-    SELECT ab.titulo FROM assinaturas a JOIN abaixos ab ON ab.id = a.abaixo_id
-     WHERE a.pessoa_id = ?
-  `).all(pessoaId).map((a) => a.titulo);
-
-  const outrosGrupos = db.prepare(`
-    SELECT g.nome FROM membros m JOIN grupos g ON g.id = m.grupo_id
-     WHERE m.pessoa_id = ? AND m.saiu_em IS NULL
-  `).all(pessoaId).map((g) => g.nome);
-
-  let intencoes = [];
-  try { intencoes = JSON.parse(p.intencoes || '[]'); } catch { intencoes = []; }
-
-  return {
-    nome: p.nome || p.nome_wa || formatarTelefone(p.telefone),
-    telefone: p.telefone,
-    cidade: p.cidade, uf: p.uf, atuacao: p.atuacao,
-    classificacao: p.faixa, engajamento: p.engajamento ?? 0,
-    mensagens: p.msgs_total ?? 0,
-    ultimaMensagem: p.ultima_msg_texto,
-    ultimaMensagemEm: p.ultima_msg_ts,
-    temaPrincipal: p.tema_principal,
-    intencoes,
-    assinou,
-    cadastrado: Boolean(p.cadastro_em),
-    aindaEstaEm: outrosGrupos
-  };
-}
-
 export function registrarMensagem({
-  waId, grupoId, pessoaId, tipo = 'texto', texto = null, respondeA = null,
-  ts = agora(), deMim = false, privada = false, sentimento = null, lida = null
+  waId, grupoId, pessoaId, tipo = 'texto', texto, respondeA = null, ts = agora(),
+  deMim = false, privada = false, sentimento = null, lida = !privada || deMim
 }) {
   const r = db.prepare(
-    `INSERT INTO mensagens (wa_id, grupo_id, pessoa_id, tipo, texto, responde_a, ts,
-                            de_mim, privada, sentimento, lida)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(wa_id) DO NOTHING`
-  ).run(waId, grupoId, pessoaId, tipo, texto, respondeA, ts,
-    deMim ? 1 : 0, privada ? 1 : 0, sentimento,
-    // O que chega de fora numa conversa privada nasce não lido.
-    lida != null ? (lida ? 1 : 0) : (privada && !deMim ? 0 : 1));
-
-  if (privada) {
-    db.prepare('UPDATE pessoas SET ultimo_contato = MAX(COALESCE(ultimo_contato, 0), ?) WHERE id = ?')
-      .run(ts, pessoaId);
-  }
-  return r.changes ? Number(r.lastInsertRowid) : null;
+    `INSERT OR IGNORE INTO mensagens
+       (wa_id, grupo_id, pessoa_id, tipo, texto, responde_a, ts, de_mim, privada, sentimento, lida)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(waId, grupoId, pessoaId, tipo, texto, respondeA, ts, deMim ? 1 : 0, privada ? 1 : 0, sentimento, lida ? 1 : 0);
+  return r.changes > 0 ? Number(r.lastInsertRowid) : null;
 }
 
 export function registrarReacao({ mensagemId, pessoaId, emoji, ts = agora() }) {
@@ -153,6 +79,49 @@ export function registrarReacao({ mensagemId, pessoaId, emoji, ts = agora() }) {
     `INSERT INTO reacoes (mensagem_id, pessoa_id, emoji, ts) VALUES (?, ?, ?, ?)
      ON CONFLICT(mensagem_id, pessoa_id) DO UPDATE SET emoji = excluded.emoji, ts = excluded.ts`
   ).run(mensagemId, pessoaId, emoji, ts);
+}
+
+export function registrarEvento({ pessoaId, tipo, descricao = null, dados = null, ts = agora() }) {
+  db.prepare(
+    `INSERT INTO eventos (pessoa_id, tipo, descricao, dados, ts) VALUES (?, ?, ?, ?, ?)`
+  ).run(pessoaId, tipo, descricao, dados ? JSON.stringify(dados) : null, ts);
+}
+
+export function registrarAlerta({ tipo, gravidade = 'info', pessoaId = null, grupoId = null, titulo, detalhe = null, dados = null, ts = agora() }) {
+  const r = db.prepare(
+    `INSERT INTO alertas (tipo, gravidade, pessoa_id, grupo_id, titulo, detalhe, dados, ts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(tipo, gravidade, pessoaId, grupoId, titulo, detalhe, dados ? JSON.stringify(dados) : null, ts);
+  return Number(r.lastInsertRowid);
+}
+
+export function retratoDaPessoa(pessoaId) {
+  const p = db.prepare(
+    `SELECT p.id, p.nome, p.nome_wa, p.telefone, p.cidade, p.uf, p.atuacao, p.cadastro_em,
+            f.classificacao, f.engajamento, f.msgs_total
+       FROM pessoas p LEFT JOIN perfil f ON f.id = p.id
+      WHERE p.id = ?`
+  ).get(pessoaId);
+  if (!p) return {};
+  const assinou = db.prepare(
+    `SELECT a.titulo FROM assinaturas s JOIN abaixos a ON a.id = s.abaixo_id WHERE s.pessoa_id = ?`
+  ).all(pessoaId).map((a) => a.titulo);
+  const aindaEstaEm = db.prepare(
+    `SELECT g.nome FROM membros m JOIN grupos g ON g.id = m.grupo_id WHERE m.pessoa_id = ? AND m.saiu_em IS NULL`
+  ).all(pessoaId).map((g) => g.nome);
+
+  return {
+    id: p.id,
+    nome: p.nome || p.nome_wa || p.telefone,
+    classificacao: p.classificacao,
+    engajamento: p.engajamento || 0,
+    mensagens: p.msgs_total || 0,
+    cidade: p.cidade,
+    uf: p.uf,
+    cadastrado: Boolean(p.cadastro_em),
+    assinou,
+    aindaEstaEm
+  };
 }
 
 /**
@@ -175,7 +144,6 @@ export function salvarCadastro({ telefone, nome, cidade, bairro = null, atuacao,
     pessoa = { id: Number(r.lastInsertRowid) };
   }
 
-  // O formulário não pergunta o estado — dá para deduzir pelo DDD.
   const uf = DDD_UF[Number(completo.slice(2, 4))] ?? null;
 
   db.prepare(
@@ -193,6 +161,88 @@ export function salvarCadastro({ telefone, nome, cidade, bairro = null, atuacao,
   });
 
   return { pessoaId: pessoa.id, novo };
+}
+
+/**
+ * Formulário completo de perfilamento de pautas do apoiador.
+ */
+export function salvarFormularioPautas({
+  nome, telefone, cidade, bairro = null, atuacao, email = null,
+  pautas = [], intencao = 'apoiador', observacoes = null, ts = agora()
+}) {
+  const digitos = String(telefone || '').replace(/\D/g, '');
+  if (digitos.length < 10) throw new Error('Telefone inválido (mínimo 10 dígitos com DDD)');
+  const completo = digitos.startsWith('55') ? digitos : `55${digitos}`;
+  const jid = `${completo}@s.whatsapp.net`;
+
+  let pessoa = db.prepare('SELECT id FROM pessoas WHERE wa_jid = ? OR telefone = ?').get(jid, completo);
+  let novo = false;
+  if (!pessoa) {
+    novo = true;
+    const r = db.prepare(
+      `INSERT INTO pessoas (wa_jid, telefone, origem, primeiro_visto) VALUES (?, ?, 'formulario_pautas', ?)`
+    ).run(jid, completo, ts);
+    pessoa = { id: Number(r.lastInsertRowid) };
+  }
+
+  const uf = DDD_UF[Number(completo.slice(2, 4))] ?? null;
+
+  db.prepare(
+    `UPDATE pessoas SET nome = ?, cidade = ?, uf = COALESCE(uf, ?),
+       bairro = COALESCE(?, bairro), atuacao = ?,
+       email = COALESCE(?, email), observacoes = COALESCE(?, observacoes), cadastro_em = COALESCE(cadastro_em, ?)
+     WHERE id = ?`
+  ).run(nome, cidade, uf, bairro, atuacao, email, observacoes, ts, pessoa.id);
+
+  const listaPautas = Array.isArray(pautas) ? pautas : (typeof pautas === 'string' ? [pautas] : []);
+  for (const tema of listaPautas) {
+    if (TEMAS[tema]) {
+      db.prepare(`
+        INSERT INTO interesses (pessoa_id, tema, acertos, ultimo_em)
+        VALUES (?, ?, 5, ?)
+        ON CONFLICT(pessoa_id, tema) DO UPDATE SET acertos = acertos + 5, ultimo_em = excluded.ultimo_em
+      `).run(pessoa.id, tema, ts);
+    }
+  }
+
+  if (intencao && INTENCOES[intencao]) {
+    db.prepare(`
+      INSERT INTO pessoa_intencoes (pessoa_id, intencao, peso, ultimo_em)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(pessoa_id, intencao) DO UPDATE SET peso = max(peso, excluded.peso), ultimo_em = excluded.ultimo_em
+    `).run(pessoa.id, intencao, INTENCOES[intencao].peso, ts);
+  }
+
+  const nomesPautas = listaPautas.map(t => TEMAS[t]?.rotulo || t).join(', ');
+  const descEv = `Preencheu Formulário de Pautas ${nomesPautas ? `— Luta por: ${nomesPautas}` : ''}`;
+  registrarEvento({
+    pessoaId: pessoa.id,
+    tipo: 'pesquisa_pautas',
+    descricao: descEv,
+    dados: { pautas: listaPautas, intencao },
+    ts
+  });
+
+  const gruposAtivos = db.prepare('SELECT id, nome, descricao FROM grupos WHERE ativo = 1').all();
+  let grupoRecomendado = null;
+  if (gruposAtivos.length > 0) {
+    const pautaPrincipal = listaPautas[0];
+    const rotuloPrincipal = pautaPrincipal ? (TEMAS[pautaPrincipal]?.rotulo || '') : '';
+    let match = gruposAtivos.find(g =>
+      rotuloPrincipal && g.nome.toLowerCase().includes(rotuloPrincipal.toLowerCase())
+    );
+    if (!match) match = gruposAtivos[0];
+    grupoRecomendado = match;
+  }
+
+  return {
+    pessoaId: pessoa.id,
+    nome,
+    novo,
+    pautaPrincipal: listaPautas[0] ? (TEMAS[listaPautas[0]]?.rotulo || listaPautas[0]) : 'Comunidade',
+    pautasFormatadas: nomesPautas,
+    grupoRecomendado
+  };
 }
 
 /** Indexa uma mensagem em temas/intenções — usado pelo motor de scoring. */

@@ -917,6 +917,129 @@ VISTAS.firebase = async () => {
     </div>`;
 };
 
+// ============================================================ FORMULÁRIOS / PAUTAS
+VISTAS.formularios = async () => {
+  const dados = await api('/formularios');
+  const urlFormulario = `${window.location.origin}/formulario`;
+  const elConta = $('#conta-formularios');
+  if (elConta) elConta.textContent = num(dados.total);
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Formulários de Pautas & Causas</h2>
+        <p>Respostas da pesquisa de perfilamento dos apoiadores — saiba exatamente o que a base defende e luta.</p>
+      </div>
+      <div class="acoes">
+        <a class="btn primario" href="/formulario" target="_blank">📋 Abrir Formulário Público</a>
+        <button class="btn" data-acao="copiar-link-form" data-link="${esc(urlFormulario)}">🔗 Copiar Link para Enviar</button>
+      </div>
+    </div>
+
+    <div class="grade g-kpi" style="margin-bottom:20px">
+      <div class="card kpi">
+        <div class="rotulo">Total de Pesquisas</div>
+        <div class="valor">${num(dados.total)}</div>
+        <div class="nota">apoiadores perfilados</div>
+      </div>
+      <div class="card kpi">
+        <div class="rotulo">Pauta Mais Defendida</div>
+        <div class="valor" style="font-size:20px;color:var(--roxo)">${esc(dados.rankings[0]?.rotulo || 'Nenhuma')}</div>
+        <div class="nota">${dados.rankings[0] ? `${num(dados.rankings[0].total)} apoiadores (${Math.round((dados.rankings[0].total / (dados.total || 1)) * 100)}%)` : 'aguardando respostas'}</div>
+      </div>
+      <div class="card kpi">
+        <div class="rotulo">Causas Mapeadas</div>
+        <div class="valor" style="color:var(--verde)">${num(dados.rankings.length)}</div>
+        <div class="nota">pautas ativas</div>
+      </div>
+    </div>
+
+    <div class="grade g-2" style="margin-bottom:20px">
+      <section class="card">
+        <header><h3>📊 Mensuração das Causas Mais Relevantes</h3></header>
+        <div class="corpo">
+          ${dados.rankings.length ? `
+            <div class="barras-h">
+              ${dados.rankings.map((r) => {
+                const pct = Math.round((r.total / (dados.total || 1)) * 100);
+                return `
+                  <div class="barra-h">
+                    <span class="rot" style="display:flex;align-items:center;gap:6px">
+                      <span style="width:10px;height:10px;border-radius:50%;background:${r.cor}"></span>
+                      ${esc(r.rotulo)}
+                    </span>
+                    <div class="barra" style="height:12px;background:#f1f5f9;border-radius:6px;overflow:hidden">
+                      <i style="width:${pct}%;background:${r.cor};height:100%;display:block"></i>
+                    </div>
+                    <span class="n">${num(r.total)} <span style="font-size:11px;color:var(--tinta-4)">(${pct}%)</span></span>
+                  </div>`;
+              }).join('')}
+            </div>` : '<div style="color:var(--tinta-4);font-size:13px;padding:10px 0">Nenhum dado de pauta coletado ainda. Compartilhe o formulário!</div>'}
+        </div>
+      </section>
+
+      <section class="card">
+        <header><h3>🔗 Divulgação da Pesquisa de Pautas</h3></header>
+        <div class="corpo">
+          <p style="font-size:13px;color:var(--tinta-3);margin-top:0">
+            Envie este link nos grupos do WhatsApp ou status para que os eleitores digam quais são suas principais lutas e entrem automaticamente no grupo temático correto:
+          </p>
+          <div class="codigo" style="font-size:13px;word-break:break-all;user-select:all;margin-bottom:12px">
+            ${esc(urlFormulario)}
+          </div>
+          <button class="btn primario" style="width:100%;justify-content:center" data-acao="copiar-link-form" data-link="${esc(urlFormulario)}">
+            📋 Copiar Link do Formulário
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <header><h3>👥 Apoiadores Perfilados (${num(dados.respostas.length)})</h3></header>
+      <div class="corpo" style="padding:0">
+        ${dados.respostas.length ? `
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="border-bottom:1px solid var(--linha);background:#f8fafc;text-align:left;color:var(--tinta-4);font-size:11.5px;text-transform:uppercase">
+                  <th style="padding:10px 14px">Apoiador</th>
+                  <th style="padding:10px 14px">Cidade / Bairro</th>
+                  <th style="padding:10px 14px">Atuação</th>
+                  <th style="padding:10px 14px">Luta / Pautas</th>
+                  <th style="padding:10px 14px">Engajamento</th>
+                  <th style="padding:10px 14px">Ação</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${dados.respostas.map((p) => `
+                  <tr style="border-bottom:1px solid var(--linha)">
+                    <td style="padding:12px 14px">
+                      <div style="font-weight:600;color:var(--tinta)" data-pessoa="${p.id}" class="clicavel">${esc(p.exibicao)}</div>
+                      <div style="font-size:11.5px;color:var(--tinta-4)">${esc(p.telefone_fmt)}</div>
+                    </td>
+                    <td style="padding:12px 14px">
+                      ${esc(p.cidade || '—')}${p.bairro ? ` <span style="color:var(--tinta-4)">(${esc(p.bairro)})</span>` : ''}
+                    </td>
+                    <td style="padding:12px 14px">${esc(p.atuacao || '—')}</td>
+                    <td style="padding:12px 14px">
+                      <div style="display:flex;gap:4px;flex-wrap:wrap">
+                        ${p.interesses_rotulos.map((i) => chip(i.rotulo, i.cor)).join('') || '<span style="color:var(--tinta-4);font-style:italic">Geral</span>'}
+                      </div>
+                    </td>
+                    <td style="padding:12px 14px">
+                      ${badgeFaixa(p.faixa)}
+                    </td>
+                    <td style="padding:12px 14px">
+                      <button class="btn fantasma" style="padding:4px 8px;font-size:12px" data-pessoa="${p.id}">🔍 Ver Ficha</button>
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>` : '<div style="padding:20px;text-align:center;color:var(--tinta-4)">Nenhum formulário respondido até o momento.</div>'}
+      </div>
+    </section>`;
+};
+
 // ============================================================ GRUPOS
 VISTAS.grupos = async () => {
   const grupos = await api('/grupos');
@@ -1628,6 +1751,16 @@ document.addEventListener('click', async (e) => {
     estado.panorama = null;
     return render();
   }
+  if (alvo('[data-acao="copiar-link-form"]')) {
+    const link = alvo('[data-acao="copiar-link-form"]').dataset.link;
+    if (link) {
+      navigator.clipboard.writeText(link).then(() => {
+        toast('Link Copiado!', 'O link do formulário foi copiado para a sua área de transferência.', 'sucesso');
+      }).catch(() => {
+        toast('Erro ao copiar', link, 'aviso');
+      });
+    }
+  }
 });
 
 overlay.addEventListener('click', fecharGaveta);
@@ -1759,5 +1892,6 @@ setInterval(() => {
   pintarFirebase(await api('/firebase/status'));
   api('/alertas?limite=1').then((r) => pintarAlertas(r.contagem));
   api('/conversas?filtro=nao_lidas').then((r) => pintarConversas(r.contagem));
+  api('/formularios').then((r) => { const el = $('#conta-formularios'); if (el) el.textContent = num(r.total); }).catch(() => {});
   await render();
 })();

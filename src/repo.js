@@ -45,8 +45,20 @@ function enriquecer(linha) {
     local: [linha.cidade, linha.uf].filter(Boolean).join('/') || null,
     tags: tagsDaPessoa(linha.id),
     grupos: gruposDaPessoa(linha.id),
-    abaixos: abaixosDaPessoa(linha.id)
+    abaixos: abaixosDaPessoa(linha.id),
+    interesses_rotulos: interessesDaPessoa(linha.id)
   };
+}
+
+export function interessesDaPessoa(pessoaId) {
+  return db.prepare(
+    `SELECT tema, acertos FROM interesses WHERE pessoa_id = ? ORDER BY acertos DESC`
+  ).all(pessoaId).map((i) => ({
+    chave: i.tema,
+    rotulo: TEMAS[i.tema]?.rotulo ?? i.tema,
+    cor: TEMAS[i.tema]?.cor ?? '#94a3b8',
+    acertos: i.acertos
+  }));
 }
 
 export function abaixosDaPessoa(pessoaId) {
@@ -555,4 +567,32 @@ export function exportarCsv(filtros = {}) {
   const linhas = [colunas.map(([c]) => c).join(';')];
   for (const p of itens) linhas.push(colunas.map(([, fn]) => escapar(fn(p))).join(';'));
   return `﻿${linhas.join('\n')}`;
+}
+
+export function listarFormularios() {
+  const pessoasFormularios = db.prepare(`
+    ${SELECT_BASE}
+    WHERE p.origem = 'formulario_pautas' OR EXISTS (SELECT 1 FROM eventos e WHERE e.pessoa_id = p.id AND e.tipo = 'pesquisa_pautas')
+    ORDER BY p.cadastro_em DESC, p.id DESC
+  `).all().map(enriquecer);
+
+  const rankings = db.prepare(`
+    SELECT i.tema, COUNT(DISTINCT i.pessoa_id) AS total
+      FROM interesses i
+      JOIN pessoas p ON p.id = i.pessoa_id
+     WHERE p.origem = 'formulario_pautas' OR EXISTS (SELECT 1 FROM eventos e WHERE e.pessoa_id = p.id AND e.tipo = 'pesquisa_pautas')
+     GROUP BY i.tema
+     ORDER BY total DESC
+  `).all().map((r) => ({
+    tema: r.tema,
+    rotulo: TEMAS[r.tema]?.rotulo ?? r.tema,
+    cor: TEMAS[r.tema]?.cor ?? '#94a3b8',
+    total: r.total
+  }));
+
+  return {
+    total: pessoasFormularios.length,
+    rankings,
+    respostas: pessoasFormularios
+  };
 }
