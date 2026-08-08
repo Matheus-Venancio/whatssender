@@ -61,6 +61,26 @@
     const form = document.getElementById('form');
     const erro = document.getElementById('erro');
 
+    // Deploy novo com disco vazio: ninguém consegue entrar. Melhor dizer o que
+    // falta do que devolver "senha incorreta" para sempre.
+    fetch('/api/estado-inicial').then((r) => r.json()).then((e) => {
+      if (e.configurado) return;
+      document.querySelector('.painel-login').innerHTML = `
+        <h2 style="margin:0 0 10px;font-size:16px">Sistema ainda não configurado</h2>
+        <p style="font-size:13px;color:#334155;line-height:1.6;margin:0 0 12px">
+          Nenhum usuário foi criado ainda, então não há como entrar.
+        </p>
+        ${e.producao ? `
+          <p style="font-size:13px;color:#334155;line-height:1.6;margin:0">
+            No painel do Render, em <b>Environment</b>, defina
+            <code>ADMIN_EMAIL</code> e <code>ADMIN_SENHA</code> e reinicie o
+            serviço. O administrador é criado sozinho no próximo boot.
+          </p>`
+        : `<p style="font-size:13px;color:#334155;line-height:1.6;margin:0">
+            Rode <code>npm run configurar</code> no servidor.
+          </p>`}`;
+    }).catch(() => { /* servidor velho ou fora do ar: mostra o login normal */ });
+
     // O navegador mostra "Please fill out this field" em inglês por padrão.
     for (const campo of form.querySelectorAll('input')) {
       const aviso = campo.type === 'email'

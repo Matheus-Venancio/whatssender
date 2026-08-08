@@ -127,6 +127,18 @@ async function apiPublica(req, res, url) {
     });
   }
 
+  // A tela de login pergunta isto antes de mostrar o formulário. Sem esta
+  // rota, um deploy sem ADMIN_EMAIL vira "e-mail ou senha incorretos" para
+  // sempre, sem pista do motivo.
+  if (rota === '/estado-inicial' && req.method === 'GET') {
+    return json(res, {
+      configurado: contas.temAlgumUsuario(),
+      campanhas: contas.listarCampanhas({ apenasAtivas: true }).length,
+      // Só em produção: em desenvolvimento o caminho é `npm run configurar`.
+      producao: process.env.NODE_ENV === 'production'
+    });
+  }
+
   if (rota === '/login' && req.method === 'POST') {
     const { email, senha } = await lerCorpo(req);
     const r = contas.entrar({ email, senha, origem: req.headers['user-agent']?.slice(0, 120) });
