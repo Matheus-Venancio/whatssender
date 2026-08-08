@@ -540,3 +540,48 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ------------------------------------------------ multi-campanha e acessos */
+.troca-campanha {
+  width: 100%; margin: -8px 0 10px; background: #1c2130; color: #e2e8f0;
+  border: 1px solid #2a3244; border-radius: 9px; padding: 7px 10px;
+  font-size: 12.5px; font-weight: 550; outline: none; cursor: pointer;
+}
+.troca-campanha:focus { border-color: var(--roxo); }
+
+.usuario-mini {
+  display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px solid #1e2433;
+}
+.usuario-mini .quem {
+  font-size: 11.5px; color: #94a3b8; flex: 1; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.usuario-mini .sair {
+  background: #1c2130; border: 0; color: #94a3b8; cursor: pointer;
+  border-radius: 7px; padding: 4px 8px; font-size: 13px;
+}
+.usuario-mini .sair:hover { background: #7f1d1d; color: #fecaca; }
+
+.papel-badge {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em;
+  padding: 2px 6px; border-radius: 5px; font-weight: 700;
+}
+
+.campanha-card { display: grid; gap: 12px; }
+.campanha-card .titulo { display: flex; align-items: center; gap: 10px; }
+.campanha-card .numeros { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11.5px; color: var(--tinta-4); }
+.campanha-card .numeros b { display: block; font-size: 19px; color: var(--tinta); font-weight: 660; }
+
+.credencial {
+  background: #0f172a; color: #a5f3fc; padding: 12px 14px; border-radius: 10px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px;
+  line-height: 1.7; word-break: break-all;
+}
+.credencial b { color: #fde68a; }
+
+@media (max-width: 1000px) {
+  .troca-campanha { width: auto; margin: 0; max-width: 190px; flex: none; }
+  .usuario-mini { margin-top: 0; padding-top: 0; border-top: 0; }
+  .usuario-mini .quem { display: none; }
+}

@@ -10,7 +10,8 @@
 // horário comercial e parada automática ao primeiro sinal de problema.
 // Você clica uma vez; ele trabalha por horas sem te derrubar.
 
-import { db, agora } from './db.js';
+import { db, agora, campanhaAtual, comCampanha } from './db.js';
+import { porCampanha } from './porcampanha.js';
 import { registrarEvento } from './ingest.js';
 import { publicarPessoa } from './firestore.js';
 
@@ -30,18 +31,25 @@ export const LIMITES = {
   pausaLongaMin: Number(process.env.ADICAO_PAUSA_LONGA_MIN || 12)       // minutos
 };
 
-export const estadoFila = {
-  ligada: false,
-  pausada: false,
-  motivoPausa: null,
-  processando: false,
-  proximoEm: null,
-  falhasSeguidas: 0,
-  desdeAPausaLonga: 0
-};
+// Uma fila por campanha: a adição da Cláudia não interfere na do Fernando,
+// e cada uma respeita o próprio teto diário.
+const filas = porCampanha(() => ({
+  executor: null,           // registrado pelo whatsapp.js quando conecta
+  temporizador: null,
+  estado: {
+    ligada: false,
+    pausada: false,
+    motivoPausa: null,
+    processando: false,
+    proximoEm: null,
+    falhasSeguidas: 0,
+    desdeAPausaLonga: 0
+  }
+}));
 
-let executor = null;      // registrado pelo whatsapp.js quando conecta
-let temporizador = null;
+/** Estado da fila da campanha ativa. */
+export const estadoDaFila = () => filas.atual().estado;
+
 const ouvintes = new Set();
 
 export function assinarFila(fn) {
@@ -49,7 +57,8 @@ export function assinarFila(fn) {
   return () => ouvintes.delete(fn);
 }
 const emitir = (tipo, dados = {}) => {
-  for (const fn of ouvintes) { try { fn({ tipo, ...dados }); } catch { /* ignora */ } }
+  const campanha = campanhaAtual();
+  for (const fn of ouvintes) { try { fn({ tipo, campanha, ...dados }); } catch { /* ignora */ } }
 };
 
 /**
@@ -57,13 +66,19 @@ const emitir = (tipo, dados = {}) => {
  * Assim este módulo não depende do socket e continua testável.
  */
 export function registrarExecutor(fns) {
-  executor = fns;
-  estadoFila.ligada = Boolean(fns);
+  const slug = campanhaAtual();
+  const fila = filas.atual();
+  fila.executor = fns;
+  fila.estado.ligada = Boolean(fns);
+
   if (!fns) {
-    estadoFila.proximoEm = null;
-  } else if (!temporizador) {
-    temporizador = setInterval(() => { girar().catch(() => {}); }, 15 * SEGUNDO);
-    temporizador.unref?.();
+    fila.estado.proximoEm = null;
+    if (fila.temporizador) { clearInterval(fila.temporizador); fila.temporizador = null; }
+  } else if (!fila.temporizador) {
+    fila.temporizador = setInterval(() => {
+      comCampanha(slug, () => girar().catch(() => {}));
+    }, 15 * SEGUNDO);
+    fila.temporizador.unref?.();
     agendarProximo();
   }
   emitir('estado');
@@ -134,8 +149,8 @@ export function enfileirar({ grupoId, pessoaIds = null, filtros = {}, limite = n
     throw erro;
   }
 
-  estadoFila.pausada = false;
-  estadoFila.motivoPausa = null;
+  filas.atual().estado.pausada = false;
+  filas.atual().estado.motivoPausa = null;
   agendarProximo(5 * SEGUNDO);
   emitir('estado');
 
@@ -151,20 +166,20 @@ export function cancelarPendentes(grupoId = null) {
 }
 
 export function pausar(motivo = 'pausada pela equipe') {
-  estadoFila.pausada = true;
-  estadoFila.motivoPausa = motivo;
-  estadoFila.proximoEm = null;
+  filas.atual().estado.pausada = true;
+  filas.atual().estado.motivoPausa = motivo;
+  filas.atual().estado.proximoEm = null;
   emitir('estado');
-  return estadoFila;
+  return filas.atual().estado;
 }
 
 export function retomar() {
-  estadoFila.pausada = false;
-  estadoFila.motivoPausa = null;
-  estadoFila.falhasSeguidas = 0;
+  filas.atual().estado.pausada = false;
+  filas.atual().estado.motivoPausa = null;
+  filas.atual().estado.falhasSeguidas = 0;
   agendarProximo(3 * SEGUNDO);
   emitir('estado');
-  return estadoFila;
+  return filas.atual().estado;
 }
 
 // ------------------------------------------------------------------ ritmo
@@ -179,23 +194,23 @@ function contarDesde(ms) {
 }
 
 function agendarProximo(atraso = null) {
-  if (estadoFila.pausada || !estadoFila.ligada) { estadoFila.proximoEm = null; return; }
+  if (filas.atual().estado.pausada || !filas.atual().estado.ligada) { filas.atual().estado.proximoEm = null; return; }
   const pendentes = db.prepare("SELECT COUNT(*) AS n FROM fila_adicao WHERE situacao='pendente'").get().n;
-  if (!pendentes) { estadoFila.proximoEm = null; return; }
+  if (!pendentes) { filas.atual().estado.proximoEm = null; return; }
 
   let espera = atraso ?? sorteioIntervalo();
   // A cada N pessoas, uma pausa longa: ritmo humano não é metrônomo.
-  if (estadoFila.desdeAPausaLonga >= LIMITES.pausaLongaACada) {
+  if (filas.atual().estado.desdeAPausaLonga >= LIMITES.pausaLongaACada) {
     espera = LIMITES.pausaLongaMin * MINUTO + Math.random() * 5 * MINUTO;
-    estadoFila.desdeAPausaLonga = 0;
+    filas.atual().estado.desdeAPausaLonga = 0;
   }
-  estadoFila.proximoEm = agora() + espera;
+  filas.atual().estado.proximoEm = agora() + espera;
 }
 
 /** Por que não podemos processar agora, se for o caso. */
 function impedimento() {
-  if (!estadoFila.ligada || !executor) return 'WhatsApp desconectado';
-  if (estadoFila.pausada) return estadoFila.motivoPausa || 'pausada';
+  if (!filas.atual().estado.ligada || !filas.atual().executor) return 'WhatsApp desconectado';
+  if (filas.atual().estado.pausada) return filas.atual().estado.motivoPausa || 'pausada';
   const hora = new Date().getHours();
   if (hora < LIMITES.horaInicio || hora >= LIMITES.horaFim) {
     return `fora do horário (retoma às ${LIMITES.horaInicio}h)`;
@@ -207,12 +222,12 @@ function impedimento() {
 
 // --------------------------------------------------------------- execução
 async function girar() {
-  if (estadoFila.processando) return;
-  if (estadoFila.proximoEm && agora() < estadoFila.proximoEm) return;
+  if (filas.atual().estado.processando) return;
+  if (filas.atual().estado.proximoEm && agora() < filas.atual().estado.proximoEm) return;
 
   const bloqueio = impedimento();
   if (bloqueio) {
-    if (estadoFila.proximoEm) { estadoFila.proximoEm = null; emitir('estado'); }
+    if (filas.atual().estado.proximoEm) { filas.atual().estado.proximoEm = null; emitir('estado'); }
     return;
   }
 
@@ -226,29 +241,29 @@ async function girar() {
      WHERE f.situacao = 'pendente' ORDER BY f.id LIMIT 1
   `).get();
 
-  if (!item) { estadoFila.proximoEm = null; return; }
+  if (!item) { filas.atual().estado.proximoEm = null; return; }
 
-  estadoFila.processando = true;
+  filas.atual().estado.processando = true;
   try {
     await processar(item);
   } catch (erro) {
     marcar(item, 'falhou', null, erro.message);
     registrarFalha(erro.message);
   } finally {
-    estadoFila.processando = false;
-    estadoFila.desdeAPausaLonga++;
+    filas.atual().estado.processando = false;
+    filas.atual().estado.desdeAPausaLonga++;
     agendarProximo();
     emitir('estado');
   }
 }
 
 async function processar(item) {
-  const resposta = await executor.adicionar(item.grupo_jid, item.pessoa_jid);
+  const resposta = await filas.atual().executor.adicionar(item.grupo_jid, item.pessoa_jid);
   const status = String(resposta?.status ?? '');
 
   if (status === '200') {
     marcar(item, 'adicionado', 'direto');
-    estadoFila.falhasSeguidas = 0;
+    filas.atual().estado.falhasSeguidas = 0;
     registrarEvento({
       pessoaId: item.pessoa_id,
       tipo: 'entrou_grupo',
@@ -264,12 +279,12 @@ async function processar(item) {
   if (status === '403' || status === '409') {
     const codigo = resposta?.content?.content?.[0]?.attrs?.code
       ?? resposta?.content?.attrs?.code
-      ?? await executor.obterConvite(item.grupo_jid);
+      ?? await filas.atual().executor.obterConvite(item.grupo_jid);
 
     if (codigo) {
-      await executor.enviarMensagem(item.pessoa_jid, textoDoConvite(item, codigo));
+      await filas.atual().executor.enviarMensagem(item.pessoa_jid, textoDoConvite(item, codigo));
       marcar(item, 'convidado', 'convite');
-      estadoFila.falhasSeguidas = 0;
+      filas.atual().estado.falhasSeguidas = 0;
       registrarEvento({
         pessoaId: item.pessoa_id,
         tipo: 'contato_equipe',
@@ -318,10 +333,10 @@ function marcar(item, situacao, metodo = null, erro = null) {
 }
 
 function registrarFalha(mensagem) {
-  estadoFila.falhasSeguidas++;
-  if (estadoFila.falhasSeguidas >= LIMITES.falhasSeguidasParaPausar) {
-    pausar(`${estadoFila.falhasSeguidas} falhas seguidas (${mensagem}) — parei sozinho para proteger o número`);
-    console.warn(`[adicao] PAUSA AUTOMÁTICA: ${estadoFila.motivoPausa}`);
+  filas.atual().estado.falhasSeguidas++;
+  if (filas.atual().estado.falhasSeguidas >= LIMITES.falhasSeguidasParaPausar) {
+    pausar(`${filas.atual().estado.falhasSeguidas} falhas seguidas (${mensagem}) — parei sozinho para proteger o número`);
+    console.warn(`[adicao] PAUSA AUTOMÁTICA: ${filas.atual().estado.motivoPausa}`);
   }
 }
 
@@ -359,7 +374,7 @@ export function resumo(grupoId = null) {
     estimativa,
     limites: LIMITES,
     estado: {
-      ...estadoFila,
+      ...filas.atual().estado,
       impedimento: impedimento()
     }
   };
@@ -387,7 +402,7 @@ export function listarFila({ grupoId = null, situacao = null, limite = 200 } = {
 
 /** Usado pelos testes para rodar um item na hora, sem esperar o relógio. */
 export async function processarAgoraParaTeste() {
-  estadoFila.proximoEm = null;
+  filas.atual().estado.proximoEm = null;
   await girar();
   return resumo();
 }

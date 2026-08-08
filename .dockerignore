@@ -1,0 +1,12 @@
+node_modules
+data
+.env
+.git
+.gitignore
+*.md
+*.bak
+.claude
+firestore.rules
+firestore.indexes.json
+firebase.json
+src/teste-*.js

@@ -3,11 +3,15 @@
 //
 //   node --no-warnings=ExperimentalWarning src/teste-conversa.js
 
-import { db, agora } from './db.js';
+import { db, agora, usarCampanha } from './db.js';
 import { upsertPessoa, registrarMensagem } from './ingest.js';
 import { recomputar } from './scoring.js';
 import { analisarSentimento, lerConversa, sugerirRespostas, atualizarConversa } from './conversa.js';
 import { listarConversas, marcarConversaLida } from './repo.js';
+
+// Estes scripts rodam sobre UMA campanha. Escolha com a variável CAMPANHA;
+// sem ela, usa a primeira encontrada em data/campanhas/.
+const CAMPANHA = usarCampanha();
 
 process.env.CANDIDATA ||= 'Dra. Cláudia Camargo';
 

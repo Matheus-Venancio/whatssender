@@ -10,8 +10,12 @@
 //   · quem já está em algum grupo é preservado por padrão: tirar da base alguém
 //     que está no grupo deixa o sistema cego para aquela pessoa.
 
-import { db } from './db.js';
+import { db, usarCampanha } from './db.js';
 import * as fb from './firestore.js';
+
+// Estes scripts rodam sobre UMA campanha. Escolha com a variável CAMPANHA;
+// sem ela, usa a primeira encontrada em data/campanhas/.
+const CAMPANHA = usarCampanha();
 
 const argumento = (nome, padrao) => {
   const i = process.argv.indexOf(`--${nome}`);
@@ -110,7 +114,7 @@ const { recomputar } = await import('./scoring.js');
 recomputar();
 
 let enviados = 0;
-if (fb.estadoFirebase.conectado) {
+if (fb.estadoDoFirebase().conectado) {
   let lote;
   do { lote = await fb.processarFila(); enviados += lote.enviados; } while (lote.enviados > 0);
 }

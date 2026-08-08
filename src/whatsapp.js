@@ -11,7 +11,8 @@
 
 import { join } from 'node:path';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
-import { db, PASTA_DADOS, agora, setConfig } from './db.js';
+import { db, agora, setConfig, campanhaAtual, comCampanha, pastaDeAuth } from './db.js';
+import { porCampanha } from './porcampanha.js';
 import {
   upsertPessoa, upsertGrupo, vincularMembro,
   registrarMensagem, registrarReacao, registrarEvento,
@@ -23,19 +24,33 @@ import { analisarSentimento, atualizarConversa } from './conversa.js';
 import { registrarExecutor, pausar as pausarFila } from './adicionar-grupo.js';
 import { publicarPessoa, publicarGrupo, publicarAlerta, enfileirar, COLECOES } from './firestore.js';
 
-const PASTA_AUTH = join(PASTA_DADOS, 'auth');
+// Cada candidato tem o seu socket, o seu QR e a sua pasta de sessão.
+const sessoes = porCampanha(() => ({
+  sock: null,
+  timerRecalculo: null,
+  timerReconexao: null,
+  tentativas: 0,
+  pessoasTocadas: new Set(),
+  estado: {
+    status: 'desconectado',   // desconectado | conectando | qr | conectado | erro
+    qr: null,
+    qrTexto: null,
+    telefone: null,
+    erro: null,
+    desde: null,
+    ultimaMensagem: null,
+    recebidas: 0,
+    historico: null,
+    disponivel: null
+  }
+}));
 
-export const estado = {
-  status: 'desconectado',   // desconectado | conectando | qr | conectado | erro
-  qr: null,                 // data URI do QR Code
-  qrTexto: null,
-  telefone: null,
-  erro: null,
-  desde: null,
-  ultimaMensagem: null,
-  recebidas: 0,
-  disponivel: null          // null = ainda não checado
-};
+const sessao = () => sessoes.atual();
+
+/** Estado do WhatsApp da campanha ativa. */
+export const estadoDoWhatsapp = () => sessao().estado;
+export const sessoesAtivas = () => sessoes.todas()
+  .map(([slug, s]) => ({ slug, status: s.estado.status, telefone: s.estado.telefone }));
 
 const ouvintes = new Set();
 export function assinar(fn) {
@@ -43,24 +58,27 @@ export function assinar(fn) {
   return () => ouvintes.delete(fn);
 }
 function emitir(tipo, dados = {}) {
+  const campanha = campanhaAtual();
   for (const fn of ouvintes) {
-    try { fn({ tipo, ...dados }); } catch { /* ouvinte morto */ }
+    try { fn({ tipo, campanha, ...dados }); } catch { /* ouvinte morto */ }
   }
 }
 
-let sock = null;
+
 let baileys = null;
 let gerarQrDataUri = null;
-let timerRecalculo = null;
 
 /** Verifica se as dependências opcionais estão instaladas. */
+let libDisponivel = null;
+
 export async function checarDependencias() {
-  if (estado.disponivel !== null) return estado.disponivel;
+  if (libDisponivel !== null) { sessao().estado.disponivel = libDisponivel; return libDisponivel; }
   try {
     baileys = await import('@whiskeysockets/baileys');
-    estado.disponivel = true;
+    libDisponivel = true;
   } catch {
-    estado.disponivel = false;
+    libDisponivel = false;
+    sessao().estado.disponivel = false;
     return false;
   }
   try {
@@ -69,28 +87,31 @@ export async function checarDependencias() {
   } catch {
     gerarQrDataUri = null;
   }
+  sessao().estado.disponivel = true;
   return true;
 }
 
 // Recalcula perfis em lote, no máximo uma vez a cada 20s, e só então publica
 // no Firestore quem mudou — evita uma escrita por mensagem recebida.
-const pessoasTocadas = new Set();
-
 function agendarRecalculo(pessoaId = null) {
-  if (pessoaId) pessoasTocadas.add(pessoaId);
-  if (timerRecalculo) return;
-  timerRecalculo = setTimeout(() => {
-    timerRecalculo = null;
-    try {
-      recomputar();
-      for (const id of pessoasTocadas) publicarPessoa(id);
-      pessoasTocadas.clear();
-      emitir('recalculado');
-    } catch (erro) {
-      console.error('[whatsapp] falha ao recalcular:', erro.message);
-    }
+  const s = sessao();
+  const slug = campanhaAtual();
+  if (pessoaId) s.pessoasTocadas.add(pessoaId);
+  if (s.timerRecalculo) return;
+  s.timerRecalculo = setTimeout(() => {
+    comCampanha(slug, () => {
+      s.timerRecalculo = null;
+      try {
+        recomputar();
+        for (const id of s.pessoasTocadas) publicarPessoa(id);
+        s.pessoasTocadas.clear();
+        emitir('recalculado');
+      } catch (erro) {
+        console.error(`[whatsapp:${slug}] falha ao recalcular:`, erro.message);
+      }
+    });
   }, 20_000);
-  timerRecalculo.unref?.();
+  s.timerRecalculo.unref?.();
 }
 
 const soDigitos = (jid) => String(jid || '').split('@')[0].split(':')[0];
@@ -154,8 +175,8 @@ function grupoConhecido(jid) {
 }
 
 async function sincronizarGrupos() {
-  if (!sock) return [];
-  const todos = await sock.groupFetchAllParticipating();
+  if (!sessao().sock) return [];
+  const todos = await sessao().sock.groupFetchAllParticipating();
   const resumo = [];
 
   for (const meta of Object.values(todos)) {
@@ -299,10 +320,10 @@ function marcarSaida({ pessoaId, grupoId, nomeGrupo, motivo = 'saiu', porQuem = 
  */
 async function avisarEquipe(alerta) {
   const destino = process.env.ALERTA_WHATSAPP;
-  if (!destino || !sock) return;
+  if (!destino || !sessao().sock) return;
   const jid = `${String(destino).replace(/\D/g, '')}@s.whatsapp.net`;
   const icone = alerta.gravidade === 'critico' ? '🚨' : '⚠️';
-  await sock.sendMessage(jid, {
+  await sessao().sock.sendMessage(jid, {
     text: `${icone} *Rede de Apoio*\n\n${alerta.titulo}\n\n${alerta.detalhe || ''}`.trim()
   });
 }
@@ -322,7 +343,7 @@ function processarMensagem(mensagem) {
 function processarMensagemPrivada(mensagem, remoto) {
   const outroLado = normalizarJid(mensagem.key.remoteJidAlt || remoto);
   if (!outroLado) return;                               // @lid sem número, newsletter etc.
-  if (outroLado === normalizarJid(estado.telefone)) return;   // conversa comigo mesmo
+  if (outroLado === normalizarJid(sessao().estado.telefone)) return;   // conversa comigo mesmo
 
   const conteudo = extrairConteudo(mensagem);
   if (!conteudo || conteudo.reacao) return;
@@ -356,7 +377,7 @@ function processarMensagemPrivada(mensagem, remoto) {
   if (!id) return;                                      // já tínhamos essa mensagem
 
   atualizarConversa(pessoaId);
-  estado.recebidas++;
+  sessao().estado.recebidas++;
   emitir('privada', {
     pessoaId,
     deMim,
@@ -449,9 +470,9 @@ function processarMensagemDeGrupo(mensagem, remoto) {
     em: new Date(ts)
   });
 
-  estado.recebidas++;
-  estado.ultimaMensagem = { grupo: grupo.nome, ts, previa: (conteudo.texto || conteudo.tipo).slice(0, 60) };
-  emitir('mensagem', estado.ultimaMensagem);
+  sessao().estado.recebidas++;
+  sessao().estado.ultimaMensagem = { grupo: grupo.nome, ts, previa: (conteudo.texto || conteudo.tipo).slice(0, 60) };
+  emitir('mensagem', sessao().estado.ultimaMensagem);
 
   // Atrito é urgente: não pode esperar o recálculo em lote de 20s.
   // Mensagem enviada pela própria campanha não vira alerta.
@@ -499,9 +520,9 @@ function avaliarAtrito({ pessoaId, grupo, texto, ts }) {
 
 async function avisarEquipeSobreAtrito({ risco, quem, grupo, texto, contexto }) {
   const destino = process.env.ALERTA_WHATSAPP;
-  if (!destino || !sock) return;
+  if (!destino || !sessao().sock) return;
   const jid = `${String(destino).replace(/\D/g, '')}@s.whatsapp.net`;
-  await sock.sendMessage(jid, {
+  await sessao().sock.sendMessage(jid, {
     text: [
       `${risco.icone} *${risco.rotulo}*`,
       `_${grupo.nome}_`,
@@ -577,62 +598,74 @@ export function simularEventoDeGrupo(evento) {
 }
 
 export async function conectar() {
+  // O slug é capturado agora: os callbacks do Baileys chegam fora do contexto
+  // do AsyncLocalStorage e precisam ser reancorados na campanha certa.
+  const slug = campanhaAtual();
+  const aqui = (fn) => (...args) => comCampanha(slug, () => fn(...args));
+
   const ok = await checarDependencias();
   if (!ok) {
-    estado.status = 'erro';
-    estado.erro = 'Baileys não instalado. Rode: npm install @whiskeysockets/baileys qrcode';
+    sessao().estado.status = 'erro';
+    sessao().estado.erro = 'Baileys não instalado. Rode: npm install @whiskeysockets/baileys qrcode';
     emitir('status');
-    return estado;
+    return sessao().estado;
   }
-  if (sock) return estado;
+  if (sessao().sock) return sessao().estado;
 
   const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileys;
 
-  mkdirSync(PASTA_AUTH, { recursive: true });
-  const { state, saveCreds } = await useMultiFileAuthState(PASTA_AUTH);
+  mkdirSync(pastaDeAuth(campanhaAtual()), { recursive: true });
+  const { state, saveCreds } = await useMultiFileAuthState(pastaDeAuth(campanhaAtual()));
   const { version } = await fetchLatestBaileysVersion();
 
-  estado.status = 'conectando';
-  estado.erro = null;
+  sessao().estado.status = 'conectando';
+  sessao().estado.erro = null;
   emitir('status');
 
   // Espelhar o histórico existente é opcional: num número novo da campanha vale
   // muito a pena; num número com anos de conversa, é despejo de dado alheio.
   const espelharHistorico = process.env.SINCRONIZAR_HISTORICO === 'true';
 
-  sock = makeWASocket({
+  sessao().sock = makeWASocket({
     version,
     auth: state,
     syncFullHistory: espelharHistorico,
     shouldSyncHistoryMessage: () => espelharHistorico,
     markOnlineOnConnect: false,              // não rouba as notificações do celular
-    browser: ['Rede de Apoio', 'Chrome', '1.0.0']
+    browser: ['Rede de Apoio', 'Chrome', '1.0.0'],
+
+    // Ping a cada 25s. Sem isso, provedores e proxies derrubam a conexão
+    // ociosa por inatividade e o sistema só percebe quando chega mensagem.
+    keepAliveIntervalMs: 25_000,
+    connectTimeoutMs: 60_000,
+    defaultQueryTimeoutMs: 60_000,
+    retryRequestDelayMs: 1_000
   });
 
   if (espelharHistorico) {
-    sock.ev.on('messaging-history.set', ({ messages = [], progress, isLatest }) => {
+    sessao().sock.ev.on('messaging-history.set', aqui(({ messages = [], progress, isLatest }) => {
       const antes = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n;
       for (const antiga of messages) {
         try { processarMensagem(antiga); } catch { /* mensagem antiga em formato estranho */ }
       }
       const importadas = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n - antes;
-      estado.historico = { progresso: progress ?? null, concluido: Boolean(isLatest) };
-      console.log(`[whatsapp] histórico: +${importadas} mensagens${progress != null ? ` (${progress}%)` : ''}`);
-      emitir('historico', estado.historico);
+      sessao().estado.historico = { progresso: progress ?? null, concluido: Boolean(isLatest) };
+      console.log(`[whatsapp:${slug}] histórico: +${importadas} mensagens${progress != null ? ` (${progress}%)` : ''}`);
+      emitir('historico', sessao().estado.historico);
       agendarRecalculo();
-    });
+    }));
   }
 
-  sock.ev.on('creds.update', saveCreds);
+  sessao().sock.ev.on('creds.update', saveCreds);   // não toca no banco, dispensa contexto
 
-  sock.ev.on('connection.update', async (update) => {
+  sessao().sock.ev.on('connection.update', aqui(async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      estado.status = 'qr';
-      estado.qrTexto = qr;
-      estado.qr = gerarQrDataUri ? await gerarQrDataUri(qr) : null;
-      console.log('\n[whatsapp] QR gerado — abra o painel em /conexao para escanear.');
+      sessao().estado.status = 'qr';
+      sessao().estado.qrTexto = qr;
+      sessao().estado.qr = gerarQrDataUri ? await gerarQrDataUri(qr) : null;
+      console.log(`\n[whatsapp:${slug}] QR gerado — abra o painel para escanear.`);
       emitir('status');
     }
 
@@ -640,90 +673,122 @@ export async function conectar() {
       // A fila de adição só funciona com o socket vivo.
       registrarExecutor({
         adicionar: async (grupoJid, pessoaJid) => {
-          const [r] = await sock.groupParticipantsUpdate(grupoJid, [pessoaJid], 'add');
+          const [r] = await sessao().sock.groupParticipantsUpdate(grupoJid, [pessoaJid], 'add');
           return r;
         },
         obterConvite: async (grupoJid) => {
-          try { return await sock.groupInviteCode(grupoJid); } catch { return null; }
+          try { return await sessao().sock.groupInviteCode(grupoJid); } catch { return null; }
         },
         enviarMensagem: (jid, texto) => enviarMensagem(jid, texto)
       });
 
-      estado.status = 'conectado';
-      estado.qr = null;
-      estado.qrTexto = null;
-      estado.desde = agora();
-      estado.telefone = soDigitos(sock.user?.id);
-      setConfig('whatsapp_telefone', estado.telefone);
-      console.log(`[whatsapp] conectado como ${estado.telefone}`);
+      sessao().tentativas = 0;
+      clearTimeout(sessao().timerReconexao);
+      sessao().estado.reconectandoEm = null;
+      sessao().estado.status = 'conectado';
+      sessao().estado.qr = null;
+      sessao().estado.qrTexto = null;
+      sessao().estado.desde = agora();
+      sessao().estado.telefone = soDigitos(sessao().sock.user?.id);
+      setConfig('whatsapp_telefone', sessao().estado.telefone);
+      console.log(`[whatsapp:${slug}] conectado como ${sessao().estado.telefone}`);
       emitir('status');
       try {
         await sincronizarGrupos();
       } catch (erro) {
-        console.error('[whatsapp] erro ao sincronizar grupos:', erro.message);
+        console.error(`[whatsapp:${slug}] erro ao sincronizar grupos:`, erro.message);
       }
     }
 
     if (connection === 'close') {
       const codigo = lastDisconnect?.error?.output?.statusCode;
-      const deslogado = codigo === DisconnectReason.loggedOut;
-      sock = null;
+      const s = sessao();
+      s.sock = null;
       registrarExecutor(null);
-      // Queda durante a adição costuma ser sinal de limite do WhatsApp.
-      if (!deslogado) pausarFila('a conexão caiu durante a adição — retome quando reconectar');
 
-      estado.status = deslogado ? 'desconectado' : 'conectando';
-      estado.erro = deslogado ? 'Sessão encerrada no celular. Escaneie o QR de novo.' : null;
-      emitir('status');
-      if (!deslogado) {
-        console.log('[whatsapp] conexão caiu, reconectando em 3s…');
-        setTimeout(() => conectar().catch(() => {}), 3000);
+      // Só estes dois casos exigem ler o QR de novo. Todo o resto é queda
+      // temporária — reconectar sozinho é o comportamento certo.
+      const precisaNovoQr = codigo === DisconnectReason.loggedOut
+        || codigo === DisconnectReason.badSession;
+
+      if (precisaNovoQr) {
+        s.tentativas = 0;
+        s.estado.status = 'desconectado';
+        s.estado.erro = codigo === DisconnectReason.loggedOut
+          ? 'Sessão encerrada no celular. Escaneie o QR de novo.'
+          : 'Sessão corrompida. Desconecte apagando a sessão e escaneie o QR de novo.';
+        console.warn(`[whatsapp:${slug}] ${s.estado.erro}`);
+        emitir('status');
+        return;
       }
-    }
-  });
 
-  sock.ev.on('messages.upsert', ({ messages, type }) => {
+      // Queda durante a adição costuma ser sinal de limite do WhatsApp.
+      pausarFila('a conexão caiu durante a adição — volta sozinho ao reconectar');
+
+      s.tentativas = (s.tentativas || 0) + 1;
+      // Espera crescente com teto de 5 min: 5s, 10s, 20s, 40s… nunca desiste.
+      const espera = Math.min(5 * 60_000, 5000 * 2 ** Math.min(s.tentativas - 1, 6));
+
+      s.estado.status = 'conectando';
+      s.estado.erro = null;
+      s.estado.reconectandoEm = agora() + espera;
+      s.estado.tentativas = s.tentativas;
+      emitir('status');
+
+      console.log(`[whatsapp:${slug}] caiu (código ${codigo ?? '?'}), ` +
+        `tentativa ${s.tentativas} em ${Math.round(espera / 1000)}s`);
+
+      clearTimeout(s.timerReconexao);
+      s.timerReconexao = setTimeout(
+        () => comCampanha(slug, () => conectar().catch(() => {})), espera
+      );
+      s.timerReconexao.unref?.();
+    }
+  }));
+
+  sessao().sock.ev.on('messages.upsert', aqui(({ messages, type }) => {
     if (type !== 'notify' && type !== 'append') return;
     for (const mensagem of messages) {
       try { processarMensagem(mensagem); } catch (erro) {
-        console.error('[whatsapp] erro ao processar mensagem:', erro.message);
+        console.error(`[whatsapp:${slug}] erro ao processar mensagem:`, erro.message);
       }
     }
-  });
+  }));
 
-  sock.ev.on('group-participants.update', (evento) => {
+  sessao().sock.ev.on('group-participants.update', aqui((evento) => {
     try { processarParticipantes(evento); } catch (erro) {
-      console.error('[whatsapp] erro em participantes:', erro.message);
+      console.error(`[whatsapp:${slug}] erro em participantes:`, erro.message);
     }
-  });
+  }));
 
-  return estado;
+  return sessao().estado;
 }
 
 export async function desconectar({ apagarSessao = false } = {}) {
-  if (sock) {
-    try { await sock.logout(); } catch { /* já caiu */ }
-    sock = null;
+  if (sessao().sock) {
+    try { await sessao().sock.logout(); } catch { /* já caiu */ }
+    sessao().sock = null;
   }
-  if (apagarSessao && existsSync(PASTA_AUTH)) rmSync(PASTA_AUTH, { recursive: true, force: true });
-  estado.status = 'desconectado';
-  estado.qr = null;
-  estado.telefone = null;
+  if (apagarSessao && existsSync(pastaDeAuth(campanhaAtual()))) rmSync(pastaDeAuth(campanhaAtual()), { recursive: true, force: true });
+  sessao().estado.status = 'desconectado';
+  sessao().estado.qr = null;
+  sessao().estado.telefone = null;
+  registrarExecutor(null);
   emitir('status');
-  return estado;
+  return sessao().estado;
 }
 
 export async function ressincronizar() {
-  if (!sock) throw new Error('WhatsApp não está conectado');
+  if (!sessao().sock) throw new Error('WhatsApp não está conectado');
   return sincronizarGrupos();
 }
 
 /** Resposta enviada pelo painel — cai na mesma conversa do WhatsApp da pessoa. */
 export async function enviarMensagem(jid, texto) {
-  if (!sock) throw new Error('WhatsApp não está conectado');
+  if (!sessao().sock) throw new Error('WhatsApp não está conectado');
   if (!texto?.trim()) throw new Error('Mensagem vazia');
 
-  const enviada = await sock.sendMessage(jid, { text: texto.trim() });
+  const enviada = await sessao().sock.sendMessage(jid, { text: texto.trim() });
   const ts = agora();
 
   // Resposta num grupo: grava na timeline do grupo, sem dono.
@@ -731,7 +796,7 @@ export async function enviarMensagem(jid, texto) {
     const grupo = grupoConhecido(jid);
     if (grupo) {
       const eu = db.prepare('SELECT id FROM pessoas WHERE wa_jid = ?')
-        .get(normalizarJid(estado.telefone) ?? '');
+        .get(normalizarJid(sessao().estado.telefone) ?? '');
       registrarMensagem({
         waId: enviada?.key?.id ?? `painel-${ts}`,
         grupoId: grupo.id,
@@ -778,9 +843,77 @@ export async function enviarMensagem(jid, texto) {
 
 /** Reconecta sozinho se já existir sessão salva de uma execução anterior. */
 export async function autoConectar() {
-  if (!existsSync(join(PASTA_AUTH, 'creds.json'))) return false;
+  const slug = campanhaAtual();
+  if (!existsSync(join(pastaDeAuth(slug), 'creds.json'))) return false;
   if (!(await checarDependencias())) return false;
-  console.log('[whatsapp] sessão encontrada, reconectando…');
+  console.log(`[whatsapp:${slug}] sessão encontrada, reconectando…`);
   await conectar();
   return true;
+}
+
+/** Sobe as conexões de todas as campanhas que já têm pareamento salvo. */
+export async function autoConectarTodas(slugs) {
+  const resultados = [];
+  for (const slug of slugs) {
+    try {
+      const ligou = await comCampanha(slug, () => autoConectar());
+      resultados.push({ slug, ligou });
+    } catch (erro) {
+      resultados.push({ slug, ligou: false, erro: erro.message });
+    }
+  }
+  vigiar(slugs);
+  return resultados;
+}
+
+/**
+ * Vigia de reconexão.
+ *
+ * O `connection.update` do Baileys resolve 99% das quedas. O 1% restante é o que
+ * derruba produção: evento perdido, socket em estado zumbi, container hibernado
+ * pelo provedor e acordado depois. Este laço roda a cada minuto e religa quem
+ * tem sessão salva no disco mas não está conectado.
+ */
+let vigia = null;
+
+export function vigiar(slugs) {
+  if (vigia) clearInterval(vigia);
+
+  vigia = setInterval(() => {
+    for (const slug of slugs) {
+      comCampanha(slug, () => {
+        const s = sessoes.de(slug);
+
+        // Já conectado, ou já tem religamento agendado: nada a fazer.
+        if (s.sock || s.estado.status === 'qr') return;
+        if (s.estado.reconectandoEm && agora() < s.estado.reconectandoEm) return;
+
+        // Sem credencial salva não adianta: precisa de QR humano.
+        if (!existsSync(join(pastaDeAuth(slug), 'creds.json'))) return;
+
+        console.log(`[whatsapp:${slug}] vigia detectou queda silenciosa, religando…`);
+        conectar().catch((erro) =>
+          console.error(`[whatsapp:${slug}] vigia falhou:`, erro.message));
+      });
+    }
+  }, 60_000);
+
+  vigia.unref?.();
+  return vigia;
+}
+
+/** Encerra tudo com elegância — o Render manda SIGTERM antes de cada deploy. */
+export async function encerrarTudo() {
+  if (vigia) clearInterval(vigia);
+  for (const [slug, s] of sessoes.todas()) {
+    clearTimeout(s.timerReconexao);
+    clearTimeout(s.timerRecalculo);
+    if (!s.sock) continue;
+    try {
+      // `end` fecha o socket SEM deslogar: a sessão no disco continua válida
+      // e a próxima subida reconecta sozinha. `logout()` apagaria o pareamento.
+      s.sock.end(undefined);
+      console.log(`[whatsapp:${slug}] socket encerrado, sessão preservada`);
+    } catch { /* já estava caído */ }
+  }
 }

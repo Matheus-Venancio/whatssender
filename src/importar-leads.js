@@ -8,15 +8,18 @@
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { db, PASTA_DADOS, agora } from './db.js';
+import { db, agora, usarCampanha, pastaDeLeads, campanhaAtual } from './db.js';
 import { lerCsv, prepararLead } from './leads.js';
 import { registrarEvento } from './ingest.js';
 import { recomputar } from './scoring.js';
+
 import {
-  publicarPessoa, publicarAbaixo, publicarAssinatura, sincronizarTudo, estadoFirebase
+  publicarPessoa, publicarAbaixo, publicarAssinatura, sincronizarTudo, estadoDoFirebase
 } from './firestore.js';
 
-const PASTA_LEADS = join(PASTA_DADOS, 'leads');
+// Resolvida na hora da chamada: o servidor importa este módulo e a campanha
+// muda a cada requisição.
+const pastaDeLeadsAtual = () => pastaDeLeads(campanhaAtual());
 
 function upsertAbaixo(abaixo, campanha) {
   const existente = db.prepare('SELECT id FROM abaixos WHERE form_id = ?').get(abaixo.formId);
@@ -146,7 +149,8 @@ export function importarArquivo(caminho) {
   return resumo;
 }
 
-export function importarPasta(pasta = PASTA_LEADS) {
+export function importarPasta(pasta = null) {
+  pasta ??= pastaDeLeadsAtual();
   if (!existsSync(pasta)) {
     return { erro: `Pasta ${pasta} não existe. Coloque os CSV exportados do Meta lá dentro.` };
   }
@@ -199,6 +203,7 @@ const TAGS_PADRAO = [
 // Só executa como CLI quando este arquivo é o ponto de entrada — importá-lo
 // pelo servidor não pode disparar nada.
 if (process.argv[1]?.endsWith('importar-leads.js')) {
+  usarCampanha();   // só quando roda como CLI — nunca ao ser importado pelo servidor
   const limpar = process.argv.includes('--limpar');
 
   if (limpar) {
@@ -209,7 +214,7 @@ if (process.argv[1]?.endsWith('importar-leads.js')) {
     }
   }
 
-  console.log(`› lendo CSVs de ${PASTA_LEADS}…`);
+  console.log(`› lendo CSVs de ${pastaDeLeadsAtual()}…`);
   const r = importarPasta();
 
   if (r.erro) {
@@ -236,7 +241,7 @@ if (process.argv[1]?.endsWith('importar-leads.js')) {
 
   await import('./firestore.js').then(async (fb) => {
     await fb.iniciarFirebase();
-    if (estadoFirebase.conectado) {
+    if (estadoDoFirebase().conectado) {
       sincronizarTudo();
       const envio = await fb.processarFila();
       console.log(`   Firestore: ${envio.enviados} documentos enviados.\n`);

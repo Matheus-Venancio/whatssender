@@ -1,0 +1,63 @@
+# Infraestrutura como código para o Render.
+# Criar o serviço: Render → New → Blueprint → aponte para este repositório.
+#
+# ATENÇÃO AO PLANO: o disco persistente NÃO existe no plano gratuito, e serviço
+# gratuito hiberna depois de alguns minutos sem acesso. Hibernar mata a conexão
+# do WhatsApp e o sistema para de ler os grupos. Para o WhatsApp ficar de pé
+# 24 horas por dia, o serviço precisa ser pago e ter disco.
+
+services:
+  - type: web
+    name: rede-apoio
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: oregon
+    plan: starter          # plano pago: exigido pelo disco e por não hibernar
+    healthCheckPath: /api/saude
+
+    # Uma instância só, sempre. Duas instâncias significariam duas conexões
+    # com a MESMA sessão do WhatsApp — o WhatsApp invalida o pareamento.
+    numInstances: 1
+
+    disk:
+      name: dados
+      mountPath: /var/dados     # bancos, sessões do WhatsApp e chaves do Firebase
+      sizeGB: 5
+
+    envVars:
+      - key: DATA_DIR
+        value: /var/dados
+      - key: NODE_ENV
+        value: production
+      - key: FORCAR_HTTPS
+        value: 'true'
+
+      # Espelhar o histórico ao parear um número novo.
+      - key: SINCRONIZAR_HISTORICO
+        value: 'true'
+
+      # Ritmo da adição a grupo — conservador de propósito.
+      - key: ADICAO_INTERVALO_MIN
+        value: '90'
+      - key: ADICAO_INTERVALO_MAX
+        value: '210'
+      - key: ADICAO_POR_DIA
+        value: '50'
+      - key: ADICAO_POR_HORA
+        value: '15'
+      - key: ADICAO_HORA_INICIO
+        value: '9'
+      - key: ADICAO_HORA_FIM
+        value: '20'
+
+      - key: FIRESTORE_ESPELHAR_MENSAGENS
+        value: 'false'
+      - key: FIRESTORE_INTERVALO_MS
+        value: '15000'
+
+      # Criado no primeiro boot, se ainda não existir nenhum usuário.
+      # Defina no painel do Render (Environment), não aqui.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_SENHA
+        sync: false

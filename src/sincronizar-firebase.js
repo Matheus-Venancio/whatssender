@@ -5,8 +5,12 @@
 //                               seriam gravados (serve para conferir o formato
 //                               antes de ter a chave do projeto)
 
-import { db } from './db.js';
+import { db, usarCampanha } from './db.js';
 import * as fb from './firestore.js';
+
+// Estes scripts rodam sobre UMA campanha. Escolha com a variável CAMPANHA;
+// sem ela, usa a primeira encontrada em data/campanhas/.
+const CAMPANHA = usarCampanha();
 
 const teste = process.argv.includes('--teste');
 
@@ -47,7 +51,7 @@ if (teste) {
 
 const ok = await fb.iniciarFirebase();
 if (!ok) {
-  console.error(`\n❌ ${fb.estadoFirebase.erro}\n`);
+  console.error(`\n❌ ${fb.estadoDoFirebase().erro}\n`);
   console.error('Passo a passo:');
   console.error('  1. console.firebase.google.com → criar projeto → Firestore Database');
   console.error('  2. Configurações do projeto → Contas de serviço → Gerar nova chave privada');
@@ -77,5 +81,5 @@ while (pendentes() > 0) {
   console.log(`   enviados ${total}…`);
 }
 
-console.log(`\n✅ ${total} documentos no Firestore (projeto ${fb.estadoFirebase.projeto}).\n`);
+console.log(`\n✅ ${total} documentos no Firestore (projeto ${fb.estadoDoFirebase().projeto}).\n`);
 process.exit(0);

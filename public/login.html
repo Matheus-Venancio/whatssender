@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · Rede de Apoio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%235b21b6'/><text y='68' x='50' text-anchor='middle' font-size='54' fill='white' font-family='sans-serif'>R</text></svg>">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { background: #10131c; display: grid; place-items: center; min-height: 100vh; padding: 20px; }
+    .caixa-login { width: 100%; max-width: 380px; }
+    .marca-login { text-align: center; margin-bottom: 24px; }
+    .marca-login .selo {
+      width: 56px; height: 56px; border-radius: 17px; margin: 0 auto 14px;
+      background: linear-gradient(135deg, #5b21b6, #2563eb); color: #fff;
+      display: grid; place-items: center; font-size: 25px; font-weight: 700;
+    }
+    .marca-login h1 { color: #fff; font-size: 19px; margin: 0 0 5px; letter-spacing: -.02em; }
+    .marca-login p { color: #64748b; font-size: 13px; margin: 0; }
+    .painel-login { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 24px 60px -20px rgba(0,0,0,.55); }
+    .erro-login {
+      background: #fee2e2; color: #b91c1c; padding: 10px 13px; border-radius: 9px;
+      font-size: 12.5px; margin-bottom: 14px; display: none;
+    }
+    .rodape-login { text-align: center; color: #475569; font-size: 11.5px; margin-top: 18px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="caixa-login">
+    <div class="marca-login">
+      <div class="selo">R</div>
+      <h1>Rede de Apoio</h1>
+      <p>Inteligência de WhatsApp para campanha</p>
+    </div>
+
+    <div class="painel-login">
+      <div class="erro-login" id="erro"></div>
+      <form id="form">
+        <div class="campo">
+          <label for="email">E-mail</label>
+          <input id="email" type="email" autocomplete="username" required autofocus>
+        </div>
+        <div class="campo">
+          <label for="senha">Senha</label>
+          <input id="senha" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="btn primario" type="submit"
+                style="width:100%;justify-content:center;padding:11px;margin-top:6px">
+          Entrar
+        </button>
+      </form>
+    </div>
+
+    <p class="rodape-login">
+      Acesso restrito à equipe da campanha.<br>
+      Dados pessoais tratados conforme a LGPD.
+    </p>
+  </div>
+
+  <script>
+    const form = document.getElementById('form');
+    const erro = document.getElementById('erro');
+
+    // O navegador mostra "Please fill out this field" em inglês por padrão.
+    for (const campo of form.querySelectorAll('input')) {
+      const aviso = campo.type === 'email'
+        ? 'Informe um e-mail válido.'
+        : 'Preencha este campo.';
+      campo.addEventListener('invalid', () => campo.setCustomValidity(aviso));
+      campo.addEventListener('input', () => campo.setCustomValidity(''));
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      erro.style.display = 'none';
+      const botao = form.querySelector('button');
+      botao.disabled = true;
+      botao.textContent = 'entrando…';
+
+      try {
+        const r = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('email').value,
+            senha: document.getElementById('senha').value
+          })
+        });
+        const dados = await r.json();
+        if (dados.erro) throw new Error(dados.erro);
+        location.href = '/';
+      } catch (falha) {
+        erro.textContent = falha.message || 'Não foi possível entrar.';
+        erro.style.display = 'block';
+        botao.disabled = false;
+        botao.textContent = 'Entrar';
+        document.getElementById('senha').value = '';
+        document.getElementById('senha').focus();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -434,6 +434,7 @@
   </div>
 
   <script>
+    const SLUG = location.pathname.split('/').filter(Boolean)[1] || '';
     const form = document.getElementById('form-pautas');
     const caixaForm = document.getElementById('caixa-form');
     const erroMsg = document.getElementById('erro-msg');
@@ -467,7 +468,7 @@
       btnSubmit.textContent = 'Gravando suas respostas…';
 
       try {
-        const resp = await fetch('/api/formulario', {
+        const resp = await fetch('/api/formulario/' + SLUG, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)

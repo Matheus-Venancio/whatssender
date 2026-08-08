@@ -4,9 +4,13 @@
 //
 //   node --no-warnings=ExperimentalWarning src/teste-adicao.js
 
-import { db, agora } from './db.js';
+import { db, agora, usarCampanha } from './db.js';
 import { upsertGrupo, upsertPessoa, vincularMembro } from './ingest.js';
 import * as fila from './adicionar-grupo.js';
+
+// Estes scripts rodam sobre UMA campanha. Escolha com a variável CAMPANHA;
+// sem ela, usa a primeira encontrada em data/campanhas/.
+const CAMPANHA = usarCampanha();
 
 let falhas = 0;
 const ok = (condicao, descricao) => {
@@ -75,6 +79,12 @@ ok(fila.resumo(grupoId).estado.impedimento === 'WhatsApp desconectado',
   'sem WhatsApp conectado, a fila não anda');
 
 // -------------------------------------------------------- executor de mentira
+// A janela de horário é uma trava real e é testada logo acima. Aqui ela sai do
+// caminho: sem isso, este teste passaria de dia e falharia depois das 20h.
+const horarioOriginal = { inicio: fila.LIMITES.horaInicio, fim: fila.LIMITES.horaFim };
+fila.LIMITES.horaInicio = 0;
+fila.LIMITES.horaFim = 24;
+
 console.log('\n4) Processando com o WhatsApp respondendo');
 const chamadas = [];
 let convitesEnviados = 0;
@@ -123,20 +133,44 @@ fila.registrarExecutor({
   enviarMensagem: async () => true
 });
 for (let i = 0; i < fila.LIMITES.falhasSeguidasParaPausar; i++) await fila.processarAgoraParaTeste();
-ok(fila.estadoFila.pausada, 'fila pausou sozinha depois das falhas seguidas');
-ok(/proteger o número/.test(fila.estadoFila.motivoPausa || ''),
-  `motivo registrado: "${fila.estadoFila.motivoPausa}"`);
+ok(fila.estadoDaFila().pausada, 'fila pausou sozinha depois das falhas seguidas');
+ok(/proteger o número/.test(fila.estadoDaFila().motivoPausa || ''),
+  `motivo registrado: "${fila.estadoDaFila().motivoPausa}"`);
 
 const pausada = fila.resumo(grupoId);
 ok(pausada.estado.impedimento !== null, 'pausada não processa mais nada');
 fila.retomar();
-ok(!fila.estadoFila.pausada, 'retomar volta a funcionar');
+ok(!fila.estadoDaFila().pausada, 'retomar volta a funcionar');
 
 // ------------------------------------------------------------- cancelar
 console.log('\n6) Cancelar o que sobrou');
 const cancelou = fila.cancelarPendentes(grupoId);
 ok(cancelou.cancelados >= 0, `${cancelou.cancelados} pendente(s) cancelado(s)`);
 ok(fila.resumo(grupoId).pendentes === 0, 'nada mais pendente');
+
+// ------------------------------------------------------- janela de horário
+console.log('\n7) Janela de horário');
+fila.enfileirar({ grupoId, pessoaIds: [pessoas[0].id] });
+db.prepare("UPDATE fila_adicao SET situacao='pendente' WHERE grupo_id = ?").run(grupoId);
+
+fila.LIMITES.horaInicio = 3;
+fila.LIMITES.horaFim = 4;      // janela que certamente não é agora
+ok(/fora do horário/.test(fila.resumo(grupoId).estado.impedimento || ''),
+  `fora da janela, a fila não anda: "${fila.resumo(grupoId).estado.impedimento}"`);
+
+const antesDaJanela = fila.resumo(grupoId).adicionados;
+await fila.processarAgoraParaTeste();
+ok(fila.resumo(grupoId).adicionados === antesDaJanela,
+  'ninguém é adicionado de madrugada, mesmo com fila cheia');
+
+fila.LIMITES.horaInicio = 0;
+fila.LIMITES.horaFim = 24;
+ok(fila.resumo(grupoId).estado.impedimento === null, 'dentro da janela, volta a andar');
+
+// Devolve os limites reais, para o teste não deixar rastro.
+fila.LIMITES.horaInicio = horarioOriginal.inicio;
+fila.LIMITES.horaFim = horarioOriginal.fim;
+fila.cancelarPendentes(grupoId);
 
 fila.registrarExecutor(null);
 limpar();

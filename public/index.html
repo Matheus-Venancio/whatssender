@@ -11,15 +11,18 @@
   <div class="app">
     <aside class="lateral">
       <div class="marca">
-        <div class="selo">R</div>
-        <div>
-          <h1>Rede de Apoio</h1>
-          <span>Inteligência de WhatsApp</span>
+        <div class="selo" id="selo-campanha">R</div>
+        <div style="min-width:0">
+          <h1 id="nome-campanha">Rede de Apoio</h1>
+          <span id="cargo-campanha">Inteligência de WhatsApp</span>
         </div>
       </div>
 
+      <select id="troca-campanha" class="troca-campanha" hidden></select>
+
       <nav id="nav">
         <button class="nav-item ativo" data-vista="panorama">📊 Panorama</button>
+        <button class="nav-item" data-vista="cadastrar">✍️ Cadastrar pessoa</button>
         <button class="nav-item" data-vista="conversas">💬 Conversas <span class="conta alerta" id="conta-conversas" data-zero="1">0</span></button>
         <button class="nav-item" data-vista="pessoas">👥 Pessoas <span class="conta" id="conta-pessoas">–</span></button>
         <button class="nav-item" data-vista="fila">🎯 Fila de ação</button>
@@ -27,9 +30,10 @@
         <button class="nav-item" data-vista="abaixos">✍️ Abaixo-assinados <span class="conta" id="conta-abaixos">–</span></button>
         <button class="nav-item" data-vista="formularios">📋 Formulários <span class="conta" id="conta-formularios">–</span></button>
         <button class="nav-item" data-vista="grupos">💬 Grupos <span class="conta" id="conta-grupos">–</span></button>
-        <div class="nav-sep">Infraestrutura</div>
-        <button class="nav-item" data-vista="conexao">🔌 WhatsApp</button>
-        <button class="nav-item" data-vista="firebase">🔥 Firebase</button>
+        <div class="nav-sep" data-so-admin>Infraestrutura</div>
+        <button class="nav-item" data-vista="conexao" data-permissao="conectarWhatsapp">🔌 WhatsApp</button>
+        <button class="nav-item" data-vista="firebase" data-permissao="configurarFirebase">🔥 Firebase</button>
+        <button class="nav-item" data-vista="contas" data-permissao="gerirUsuarios">🔑 Acessos</button>
       </nav>
 
       <div class="rodape">
@@ -40,6 +44,10 @@
         <div class="conexao-mini" style="margin-top:6px">
           <span class="ponto" id="ponto-firebase"></span>
           <span id="texto-firebase">firebase…</span>
+        </div>
+        <div class="usuario-mini">
+          <span class="quem" id="usuario-nome">…</span>
+          <button class="sair" id="botao-sair" title="Sair">⏻</button>
         </div>
         <p class="aviso-lgpd">
           Dados pessoais tratados para fins de mobilização política.

@@ -1,9 +1,12 @@
-# Rede de Apoio — inteligência de WhatsApp para campanha
+# Rede de Apoio — inteligência de WhatsApp para campanhas
 
-Sistema que junta duas coisas que hoje vivem separadas:
+Sistema **multi-campanha**: vários candidatos usando a mesma estratégia, cada um com
+a sua base, o seu WhatsApp e o seu Firebase. Nenhum enxerga o apoiador do outro.
+
+Para cada campanha, o sistema junta duas coisas que hoje vivem separadas:
 
 1. **Os abaixo-assinados** captados por anúncio no Facebook/Instagram (nome, cidade, atuação);
-2. **Os grupos de WhatsApp** da campanha (quem fala, sobre o quê, quem some, quem sai).
+2. **Os grupos de WhatsApp** (quem fala, sobre o quê, quem some, quem sai).
 
 O casamento é sempre pelo **telefone**. O resultado é uma ficha viva por pessoa:
 quem é, onde mora, do que entende, o quanto participa, o que quer resolver e qual
@@ -11,12 +14,86 @@ quem é, onde mora, do que entende, o quanto participa, o que quer resolver e qu
 
 ```bash
 npm install
-npm run producao     # importa os CSV de data/leads/ (zera a base antes)
-npm start            # painel em http://localhost:3333
+npm run configurar      # migra a base existente e cria os acessos
+npm start               # painel em http://localhost:3333/login
 ```
 
-**Base 100% de produção** — 743 pessoas, sendo 134 leads (todos de **SP**) e 609 membros
-vindos dos grupos. 152 assinaturas, 11 grupos monitorados. Nenhum dado fictício.
+**Campanhas hoje:** `claudia` (744 pessoas · 152 assinaturas · 11 grupos),
+`fernando-souza` e `gustavo-lima` (bases novas, prontas para usar).
+
+---
+
+## 0. Acessos e isolamento
+
+### Três papéis
+
+| Papel | O que faz |
+|---|---|
+| **admin** | vê e administra TODAS as campanhas, cria acessos, troca de campanha no seletor |
+| **equipe** | trabalha numa campanha só: responde, adiciona ao grupo, edita ficha, importa leads |
+| **candidato** | vê a base dele e usa o **formulário de cadastro** para preencher com as pessoas. Não conecta WhatsApp, não mexe no Firebase, não dispara adição em massa e não exporta a base |
+
+### Como o isolamento funciona
+
+Não é por coluna `campanha_id` — é por **arquivo**:
+
+```
+data/
+  admin.db                    campanhas, usuários e sessões (o único compartilhado)
+  campanhas/
+    claudia/
+      rede.db                 base da Cláudia
+      auth/                   sessão do WhatsApp dela
+      leads/                  CSVs dos abaixo-assinados dela
+      firebase-key.json       projeto Firebase dela
+    fernando-souza/...
+    gustavo-lima/...
+```
+
+É impossível uma consulta esquecer o filtro e vazar base de um candidato para outro:
+os dados nem estão no mesmo arquivo. O `db` do código é um Proxy que resolve, a cada
+acesso, o banco da campanha ativa no contexto (`AsyncLocalStorage`) — por isso as ~200
+consultas do sistema continuam escritas do jeito simples, sem `WHERE campanha = ?`.
+
+Se alguém forjar o cabeçalho `x-campanha` apontando para uma campanha que não é dele,
+o servidor ignora e devolve a base dele. Isso está coberto por teste.
+
+### Comandos de gestão
+
+```bash
+npm run configurar -- --listar
+npm run configurar -- --campanha "Fernando Souza" --cargo "Vereador · Campinas"
+npm run configurar -- --usuario ana@campanha.com --nome "Ana" --papel equipe --campanha-slug claudia
+npm run configurar -- --firebase fernando-souza
+```
+
+Criar campanha pelo painel (**Acessos → + Campanha**) já gera os dois acessos —
+equipe e candidato — com senhas aleatórias mostradas **uma única vez**. As senhas são
+guardadas com scrypt e sal; não existem em texto em lugar nenhum.
+
+### Firebase por campanha
+
+Cada campanha aponta a **sua** chave. Uma campanha sem chave própria simplesmente
+**não sincroniza** — o sistema se recusa a escrever a base de um candidato dentro do
+projeto Firebase de outro. Para compartilhar um projeto de propósito, defina
+`firebase_prefixo` e os dados vão para `campanhas/<slug>/…`.
+
+### O que o candidato usa
+
+Aba **✍️ Cadastrar pessoa**: formulário dentro do painel para preencher na hora com a
+pessoa do lado, mais o **link público** e um **QR Code** para eventos e panfletos.
+Cada campanha tem os seus: `/cadastro/<slug>` e `/formulario/<slug>`.
+
+### Rodar comandos numa campanha específica
+
+Os scripts de linha de comando trabalham sobre uma campanha por vez:
+
+```bash
+CAMPANHA=fernando-souza npm run importar
+CAMPANHA=claudia npm run teste
+```
+
+Sem a variável, usam a primeira campanha encontrada.
 
 ---
 
@@ -375,6 +452,9 @@ npm run teste
 - **`teste:firestore`** (16 verificações) — formato dos documentos, envio em lote de 433
   documentos, limite de 500 por lote, deduplicação da fila, e recuperação de falha de rede
   sem perder dado. Roda contra um cliente falso, sem rede.
+- **`teste:contas`** (43 verificações) — isolamento entre campanhas (inclusive tentativa de
+  acesso cruzado), contexto obrigatório no banco, hash de senha, login, sessão, permissões
+  por papel e desativação de acesso.
 - **`teste:adicao`** (32 verificações) — elegibilidade, filtros, deduplicação, os quatro
   status que o WhatsApp devolve (adicionou / privacidade / saiu recente / bloqueou),
   texto do convite e a parada automática após erros seguidos.
@@ -399,6 +479,9 @@ src/
   firestore.js         ponte com o Firebase (outbox, lotes, documentos)
   risco.js             ⭐ dicionário de atrito — quando a conversa azeda
   conversa.js          ⭐ sentimento, leitura da conversa e sugestões de resposta
+  contas.js            ⭐ campanhas, usuários, sessões e permissões
+  porcampanha.js       estado (WhatsApp/Firebase/fila) isolado por campanha
+  configurar.js        migração inicial e gestão pela linha de comando
   adicionar-grupo.js   ⭐ fila de adição a grupo em ritmo seguro
   filtrar-uf.js        limpeza da base por estado
   whatsapp.js          conector Baileys 7 (QR, grupos, tempo real, saídas, atrito)
@@ -423,8 +506,9 @@ data/leads/*.csv       exports do Meta (não versionados)
 | `npm run firebase:sync` | envia tudo para o Firestore |
 | `npm run firebase:previa` | mostra o que subiria, sem enviar |
 | `npm run riscos` | reavalia o histórico com o dicionário de atrito atual |
+| `npm run configurar` | cria campanhas e acessos (`-- --listar` mostra tudo) |
 | `npm run filtrar-uf` | simula a limpeza da base por estado (`-- --confirmar` aplica) |
-| `npm run teste` | roda as cinco suítes |
+| `npm run teste` | roda as seis suítes |
 
 ---
 

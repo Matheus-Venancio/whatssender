@@ -17,7 +17,11 @@ const estado = {
   pessoaAberta: null,
   inbox: { filtro: '', busca: '', mostrandoThread: false },
   conversaAberta: null,
-  adicionar: null
+  adicionar: null,
+  usuario: null,
+  campanha: null,
+  campanhas: [],
+  permissoes: {}
 };
 
 // ------------------------------------------------------------------ utilidades
@@ -70,12 +74,24 @@ function chip(rotulo, cor, extra = '') {
 
 async function api(caminho, opcoes) {
   const r = await fetch(`/api${caminho}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      // Toda chamada declara em qual campanha está trabalhando.
+      ...(estado.campanha ? { 'x-campanha': estado.campanha.slug } : {})
+    },
     ...opcoes,
     body: opcoes?.body ? JSON.stringify(opcoes.body) : undefined
   });
+  if (r.status === 401) { location.href = '/login'; return {}; }
+  if (r.status === 403) {
+    const erro = await r.json().catch(() => ({}));
+    toast('Sem permissão', erro.erro || 'Seu acesso não permite essa ação.', 'critico');
+    return { erro: erro.erro || 'sem permissão' };
+  }
   return r.json();
 }
+
+const podeFazer = (acao) => Boolean(estado.permissoes?.[acao]);
 
 const queryFiltros = () => new URLSearchParams(
   Object.entries(estado.filtros).filter(([, v]) => v !== '' && v != null)
@@ -920,7 +936,7 @@ VISTAS.firebase = async () => {
 // ============================================================ FORMULÁRIOS / PAUTAS
 VISTAS.formularios = async () => {
   const dados = await api('/formularios');
-  const urlFormulario = `${window.location.origin}/formulario`;
+  const urlFormulario = `${location.origin}/formulario/${estado.campanha.slug}`;
   const elConta = $('#conta-formularios');
   if (elConta) elConta.textContent = num(dados.total);
 
@@ -931,7 +947,7 @@ VISTAS.formularios = async () => {
         <p>Respostas da pesquisa de perfilamento dos apoiadores — saiba exatamente o que a base defende e luta.</p>
       </div>
       <div class="acoes">
-        <a class="btn primario" href="/formulario" target="_blank">📋 Abrir Formulário Público</a>
+        <a class="btn primario" href="/formulario/${esc(estado.campanha.slug)}" target="_blank">📋 Abrir Formulário Público</a>
         <button class="btn" data-acao="copiar-link-form" data-link="${esc(urlFormulario)}">🔗 Copiar Link para Enviar</button>
       </div>
     </div>
@@ -1269,6 +1285,307 @@ async function desenharAdicionar(grupo) {
   }
 }
 
+// ============================================================ CADASTRAR PESSOA
+VISTAS.cadastrar = async () => {
+  const c = estado.campanha;
+  const link = `${location.origin}/cadastro/${c.slug}`;
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Cadastrar pessoa</h2>
+        <p>Preencha na hora, com a pessoa do lado — ou mande o link para ela mesma preencher.</p>
+      </div>
+    </div>
+
+    <div class="grade g-2">
+      <section class="card">
+        <header><h3>Preencher agora</h3><span class="dica">entra direto na base</span></header>
+        <div class="corpo">
+          <form id="form-rapido">
+            <div class="campo"><label>Nome completo *</label>
+              <input name="nome" required placeholder="Como ela quer ser chamada"></div>
+            <div class="campo"><label>WhatsApp (com DDD) *</label>
+              <input name="telefone" required inputmode="tel" placeholder="(19) 99999-8888"></div>
+            <div class="grade" style="grid-template-columns:1.4fr 1fr;gap:10px">
+              <div class="campo"><label>Cidade *</label>
+                <input name="cidade" required placeholder="Campinas"></div>
+              <div class="campo"><label>Bairro</label>
+                <input name="bairro" placeholder="Ouro Verde"></div>
+            </div>
+            <div class="campo"><label>Atuação *</label>
+              <input name="atuacao" required list="atuacoes"
+                     placeholder="professora, comerciante, líder comunitária…">
+              <datalist id="atuacoes">
+                <option>Professor(a) ou educador(a)</option><option>Mãe, pai ou responsável</option>
+                <option>Apoiador da causa</option><option>Profissional de psicologia</option>
+                <option>Agente comunitária de saúde</option><option>Líder comunitária</option>
+                <option>Comerciante</option><option>Autônoma</option><option>Aposentado</option>
+              </datalist>
+            </div>
+            <div class="campo"><label>E-mail (opcional)</label>
+              <input name="email" type="email"></div>
+            <div class="campo"><label>O que ela te contou (opcional)</label>
+              <textarea name="observacoes" rows="3"
+                        placeholder="A demanda dela, o bairro, o que precisa…"></textarea></div>
+            <button class="btn primario" type="submit"
+                    style="width:100%;justify-content:center;padding:12px">
+              Cadastrar na rede
+            </button>
+            <p id="aviso-rapido" style="display:none;margin-top:12px"></p>
+          </form>
+        </div>
+      </section>
+
+      <div style="display:grid;gap:16px;align-content:start">
+        <section class="card">
+          <header><h3>Link do formulário</h3></header>
+          <div class="corpo">
+            <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.55;margin:0 0 10px">
+              Mande nos grupos ou coloque na bio. Quem preencher entra direto na base
+              de <b>${esc(c.nome)}</b> — e se já estiver num grupo, o telefone junta tudo
+              numa ficha só.
+            </p>
+            <div class="codigo">${esc(link)}</div>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+              <button class="btn" data-copiar="${esc(link)}">Copiar link</button>
+              <a class="btn" href="/cadastro/${esc(c.slug)}" target="_blank">Abrir ↗</a>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header><h3>QR Code</h3><span class="dica">para eventos e panfletos</span></header>
+          <div class="corpo" style="text-align:center">
+            <img src="/api/qr?texto=${encodeURIComponent(link)}" alt="QR do formulário"
+                 style="width:230px;max-width:100%;border:1px solid var(--linha);border-radius:12px">
+            <p style="font-size:12px;color:var(--tinta-3);line-height:1.55;margin:10px 0 0">
+              Imprima ou mostre na tela do celular: a pessoa aponta a câmera e
+              preenche sozinha.
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>`;
+
+  $('#form-rapido').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const aviso = $('#aviso-rapido');
+    const botao = e.target.querySelector('button[type=submit]');
+    botao.disabled = true; botao.textContent = 'cadastrando…';
+
+    const dados = Object.fromEntries(new FormData(e.target));
+    const r = await fetch(`/api/cadastro/${c.slug}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados)
+    }).then((x) => x.json());
+
+    aviso.style.display = 'block';
+    if (r.erro) {
+      aviso.className = 'alerta';
+      aviso.textContent = r.erro;
+    } else {
+      aviso.className = 'alerta info';
+      aviso.innerHTML = r.novo
+        ? `✅ <b>${esc(dados.nome)}</b> entrou na rede.`
+        : `✅ <b>${esc(dados.nome)}</b> já estava na base — a ficha foi completada.`;
+      e.target.reset();
+      estado.panorama = null;
+      api('/conversas?filtro=nao_lidas').then((x) => pintarConversas(x.contagem)).catch(() => {});
+    }
+    botao.disabled = false; botao.textContent = 'Cadastrar na rede';
+    e.target.querySelector('[name=nome]').focus();
+  });
+};
+
+// ============================================================ ACESSOS
+VISTAS.contas = async () => {
+  const [campanhas, usuarios] = await Promise.all([api('/campanhas'), api('/usuarios')]);
+  const admin = estado.usuario.papel === 'admin';
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Acessos</h2>
+        <p>${campanhas.length} campanha(s) · ${usuarios.length} usuário(s).
+           Cada campanha tem banco, WhatsApp e Firebase próprios.</p>
+      </div>
+      ${admin ? `<div class="acoes">
+        <button class="btn" data-acao="novo-usuario">+ Usuário</button>
+        <button class="btn primario" data-acao="nova-campanha">+ Campanha</button>
+      </div>` : ''}
+    </div>
+
+    <div class="grade g-3" style="margin-bottom:18px">
+      ${campanhas.map((c) => `
+        <section class="card">
+          <div class="corpo campanha-card">
+            <div class="titulo">
+              <span class="avatar" style="background:${esc(c.cor)}">${esc(iniciais(c.nome))}</span>
+              <div style="min-width:0">
+                <div style="font-weight:650;letter-spacing:-.01em">${esc(c.nome)}</div>
+                <div class="sub" style="color:var(--tinta-4)">${esc(c.cargo || c.slug)}</div>
+              </div>
+              <span style="margin-left:auto">
+                <span class="ponto ${c.whatsapp === 'conectado' ? 'on' : c.whatsapp === 'qr' ? 'qr' : ''}"
+                      title="WhatsApp: ${esc(c.whatsapp)}"></span>
+              </span>
+            </div>
+            <div class="numeros">
+              <div><b>${num(c.resumo.pessoas)}</b> pessoas</div>
+              <div><b>${num(c.resumo.grupos)}</b> grupos</div>
+              <div><b>${num(c.resumo.assinaturas)}</b> assinaturas</div>
+              <div><b>${num(c.usuarios)}</b> acessos</div>
+            </div>
+            <div class="linha-dado"><span class="k">Formulário</span>
+              <span class="v"><a href="/cadastro/${esc(c.slug)}" target="_blank">/cadastro/${esc(c.slug)}</a></span></div>
+            <div class="linha-dado"><span class="k">Firebase</span>
+              <span class="v">${c.firebase_key ? '✅ projeto próprio' : '<span class="vazio">não configurado</span>'}</span></div>
+            ${c.resumo.naoLidas || c.resumo.alertas ? `<div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${c.resumo.naoLidas ? chip(`${c.resumo.naoLidas} não lidas`, '#16a34a') : ''}
+              ${c.resumo.alertas ? chip(`${c.resumo.alertas} alertas`, '#dc2626') : ''}
+            </div>` : ''}
+            ${admin && c.slug !== estado.campanha.slug
+              ? `<button class="btn" style="width:100%;justify-content:center" data-ir-campanha="${esc(c.slug)}">Trabalhar nesta campanha</button>`
+              : '<div class="sub" style="text-align:center;color:var(--tinta-4)">você está aqui</div>'}
+          </div>
+        </section>`).join('')}
+    </div>
+
+    <section class="card">
+      <header><h3>Usuários</h3><span class="dica">senha só aparece na criação</span></header>
+      <div class="tabela-rolagem">
+        <table class="tabela" style="min-width:640px">
+          <thead><tr><th>Pessoa</th><th>Papel</th><th>Campanha</th><th>Último acesso</th><th></th></tr></thead>
+          <tbody>
+            ${usuarios.map((u) => `
+              <tr style="cursor:default">
+                <td>
+                  <div style="font-weight:600">${esc(u.nome)}</div>
+                  <div class="sub">${esc(u.email)}</div>
+                </td>
+                <td><span class="papel-badge" style="background:${CORES_PAPEL[u.papel]}20;color:${CORES_PAPEL[u.papel]}">${esc(u.papel)}</span></td>
+                <td>${esc(u.campanha_nome || (u.papel === 'admin' ? 'todas' : '—'))}</td>
+                <td class="sub">${u.ultimo_acesso ? quando(u.ultimo_acesso) : 'nunca entrou'}</td>
+                <td style="text-align:right;white-space:nowrap">
+                  ${admin ? `
+                    <button class="btn" data-senha-de="${esc(u.email)}">Nova senha</button>
+                    ${u.email !== estado.usuario.email
+                      ? `<button class="btn" data-ativo-de="${esc(u.email)}" data-ativo="${u.ativo ? 0 : 1}">
+                          ${u.ativo ? 'Desativar' : 'Reativar'}</button>` : ''}
+                  ` : ''}
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="alerta info" style="margin-top:16px">
+      <b>Como os papéis funcionam.</b>
+      <b>Admin</b> vê todas as campanhas e cria acessos.
+      <b>Equipe</b> trabalha numa campanha só — responde, adiciona, edita ficha.
+      <b>Candidato</b> vê a base dele e usa o formulário de cadastro para preencher com as
+      pessoas; não conecta WhatsApp, não mexe no Firebase e não dispara adição em massa.
+    </div>`;
+};
+
+async function formularioNovaCampanha() {
+  gaveta.innerHTML = `
+    <div class="topo">
+      <div style="min-width:0">
+        <div style="font-size:16px;font-weight:660;letter-spacing:-.02em">Nova campanha</div>
+        <div style="font-size:12.5px;color:var(--tinta-3)">banco, WhatsApp e Firebase separados</div>
+      </div>
+      <button class="fechar" data-acao="fechar-gaveta">✕</button>
+    </div>
+    <div class="rolagem">
+      <div class="bloco">
+        <div class="campo"><label>Nome do candidato *</label>
+          <input id="nc-nome" placeholder="Ex.: Fernando Souza"></div>
+        <div class="campo"><label>Cargo</label>
+          <input id="nc-cargo" placeholder="Ex.: Vereador · Campinas"></div>
+        <div class="campo"><label>Cor da campanha</label>
+          <input id="nc-cor" type="color" value="#2563eb" style="height:40px;padding:4px"></div>
+        <div class="campo"><label>E-mail da equipe</label>
+          <input id="nc-equipe" type="email" placeholder="equipe@campanha.com"></div>
+        <div class="campo"><label>E-mail do candidato</label>
+          <input id="nc-candidato" type="email" placeholder="candidato@email.com"></div>
+      </div>
+      <div class="alerta info">
+        Ao criar, o sistema já gera <b>dois acessos</b> (equipe e candidato) com senhas
+        aleatórias. Anote-as: elas aparecem uma única vez.
+      </div>
+      <button class="btn primario" style="width:100%;justify-content:center;padding:12px"
+              data-acao="salvar-campanha">Criar campanha</button>
+    </div>`;
+  gaveta.classList.add('aberto');
+  overlay.classList.add('aberto');
+  $('#nc-nome', gaveta)?.focus();
+}
+
+async function formularioNovoUsuario() {
+  const campanhas = estado.campanhas;
+  gaveta.innerHTML = `
+    <div class="topo">
+      <div style="min-width:0">
+        <div style="font-size:16px;font-weight:660;letter-spacing:-.02em">Novo acesso</div>
+        <div style="font-size:12.5px;color:var(--tinta-3)">a senha é gerada automaticamente</div>
+      </div>
+      <button class="fechar" data-acao="fechar-gaveta">✕</button>
+    </div>
+    <div class="rolagem">
+      <div class="bloco">
+        <div class="campo"><label>Nome *</label><input id="nu-nome"></div>
+        <div class="campo"><label>E-mail *</label><input id="nu-email" type="email"></div>
+        <div class="campo"><label>Papel *</label>
+          <select id="nu-papel">
+            <option value="equipe">Equipe — trabalha na campanha</option>
+            <option value="candidato">Candidato — vê a base e usa o formulário</option>
+            <option value="admin">Admin — vê todas as campanhas</option>
+          </select>
+        </div>
+        <div class="campo" id="nu-campo-campanha"><label>Campanha *</label>
+          <select id="nu-campanha">
+            ${campanhas.map((c) => `<option value="${esc(c.slug)}">${esc(c.nome)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <button class="btn primario" style="width:100%;justify-content:center;padding:12px"
+              data-acao="salvar-usuario">Criar acesso</button>
+    </div>`;
+  gaveta.classList.add('aberto');
+  overlay.classList.add('aberto');
+  $('#nu-papel', gaveta).addEventListener('change', (e) => {
+    $('#nu-campo-campanha', gaveta).hidden = e.target.value === 'admin';
+  });
+  $('#nu-nome', gaveta)?.focus();
+}
+
+function mostrarCredencial(titulo, itens) {
+  gaveta.innerHTML = `
+    <div class="topo">
+      <div style="min-width:0">
+        <div style="font-size:16px;font-weight:660;letter-spacing:-.02em">${esc(titulo)}</div>
+        <div style="font-size:12.5px;color:var(--tinta-3)">anote agora — não aparece de novo</div>
+      </div>
+      <button class="fechar" data-acao="fechar-gaveta">✕</button>
+    </div>
+    <div class="rolagem">
+      <div class="alerta"><b>Guarde estas senhas.</b> Elas não ficam salvas em texto em
+        lugar nenhum — só o resumo criptográfico. Se perder, gere uma nova.</div>
+      <div class="credencial">
+        ${itens.map((i) => `${esc(i.rotulo)}<br><b>${esc(i.email)}</b> · senha <b>${esc(i.senha)}</b><br><br>`).join('')}
+      </div>
+      <button class="btn" style="width:100%;justify-content:center" data-acao="copiar-credencial">
+        Copiar tudo
+      </button>
+    </div>`;
+  gaveta.dataset.credencial = itens
+    .map((i) => `${i.rotulo}\n${i.email}\nsenha: ${i.senha}`).join('\n\n');
+  gaveta.classList.add('aberto');
+  overlay.classList.add('aberto');
+}
+
 // ============================================================ CONEXÃO
 VISTAS.conexao = async () => {
   const s = estado.whatsapp = await api('/whatsapp/status');
@@ -1277,10 +1594,13 @@ VISTAS.conexao = async () => {
     conectado: 'Conectado', erro: 'Erro'
   }[s.status] || s.status;
 
+  const c = estado.campanha;
+  const outras = estado.campanhas.filter((x) => x.slug !== c.slug);
+
   conteudo.innerHTML = `
     <div class="cabecalho">
       <div>
-        <h2>Conectar o WhatsApp</h2>
+        <h2>WhatsApp de ${esc(c.nome)}</h2>
         <p>Status atual: <b>${rotulo}</b>${s.telefone ? ` · número ${esc(s.telefone)}` : ''}</p>
       </div>
       <div class="acoes">
@@ -1289,6 +1609,17 @@ VISTAS.conexao = async () => {
              <button class="btn" data-acao="wa-desconectar">Desconectar</button>`
           : '<button class="btn primario" data-acao="wa-conectar">Gerar QR Code</button>'}
       </div>
+    </div>
+
+    <!-- Multi-campanha: conectar o número do candidato errado bagunça duas
+         bases de uma vez. O aviso é proposital e não some. -->
+    <div class="alerta ${s.status === 'conectado' ? 'info' : ''}" style="margin-bottom:16px;
+         border-left-color:${esc(c.cor)}">
+      <b>Você está conectando o WhatsApp de ${esc(c.nome)}${c.cargo ? ` (${esc(c.cargo)})` : ''}.</b>
+      Use o chip dedicado desta campanha — o número lido aqui passa a alimentar
+      só a base dela.
+      ${outras.length ? `<br><span style="font-size:12px">Para outro candidato, troque a campanha
+        no seletor à esquerda: ${outras.map((o) => esc(o.nome)).join(' · ')}.</span>` : ''}
     </div>
 
     <div class="grade g-2">
@@ -1612,6 +1943,90 @@ document.addEventListener('click', async (e) => {
 
   if (alvo('[data-acao="enviar-resposta"]')) return enviarResposta();
 
+  // --- acessos -------------------------------------------------------------
+  if (alvo('[data-acao="nova-campanha"]')) return formularioNovaCampanha();
+  if (alvo('[data-acao="novo-usuario"]')) return formularioNovoUsuario();
+
+  const irCampanha = alvo('[data-ir-campanha]');
+  if (irCampanha) {
+    const seletor = $('#troca-campanha');
+    seletor.value = irCampanha.dataset.irCampanha;
+    seletor.dispatchEvent(new Event('change'));
+    return;
+  }
+
+  if (alvo('[data-acao="salvar-campanha"]')) {
+    const b = alvo('[data-acao="salvar-campanha"]');
+    const nome = $('#nc-nome').value.trim();
+    if (!nome) return toast('Falta o nome', 'Informe o nome do candidato.', 'critico');
+    b.disabled = true; b.textContent = 'criando…';
+
+    const r = await api('/campanhas', {
+      method: 'POST',
+      body: {
+        nome, cargo: $('#nc-cargo').value.trim() || null, cor: $('#nc-cor').value,
+        emailEquipe: $('#nc-equipe').value.trim() || null,
+        emailCandidato: $('#nc-candidato').value.trim() || null
+      }
+    });
+    if (r.erro) { toast('Não deu', r.erro, 'critico'); b.disabled = false; b.textContent = 'Criar campanha'; return; }
+
+    estado.campanhas = (await api('/eu')).campanhas;
+    if (r.acessos?.length) mostrarCredencial(`Campanha "${r.nome}" criada`, r.acessos);
+    else { fecharGaveta(); toast('Campanha criada', r.nome); }
+    pintarIdentidade();
+    return render();
+  }
+
+  if (alvo('[data-acao="salvar-usuario"]')) {
+    const b = alvo('[data-acao="salvar-usuario"]');
+    const papel = $('#nu-papel').value;
+    const corpo = {
+      nome: $('#nu-nome').value.trim(),
+      email: $('#nu-email').value.trim(),
+      papel,
+      campanhaSlug: papel === 'admin' ? null : $('#nu-campanha').value
+    };
+    if (!corpo.nome || !corpo.email) return toast('Faltam dados', 'Nome e e-mail são obrigatórios.', 'critico');
+    b.disabled = true; b.textContent = 'criando…';
+
+    const r = await api('/usuarios', { method: 'POST', body: corpo });
+    if (r.erro) { toast('Não deu', r.erro, 'critico'); b.disabled = false; b.textContent = 'Criar acesso'; return; }
+    mostrarCredencial('Acesso criado',
+      [{ rotulo: `${r.nome} (${r.papel})`, email: r.email, senha: r.senhaGerada }]);
+    return render();
+  }
+
+  const novaSenha = alvo('[data-senha-de]');
+  if (novaSenha) {
+    const email = novaSenha.dataset.senhaDe;
+    const r = await api(`/usuarios/${encodeURIComponent(email)}/senha`, { method: 'POST' });
+    if (r.erro) return toast('Não deu', r.erro, 'critico');
+    mostrarCredencial('Senha redefinida', [{ rotulo: email, email, senha: r.senha }]);
+    return;
+  }
+
+  const trocarAtivo = alvo('[data-ativo-de]');
+  if (trocarAtivo) {
+    await api(`/usuarios/${encodeURIComponent(trocarAtivo.dataset.ativoDe)}/ativo`, {
+      method: 'POST', body: { ativo: trocarAtivo.dataset.ativo === '1' }
+    });
+    return render();
+  }
+
+  const copiar = alvo('[data-copiar]');
+  if (copiar) {
+    await navigator.clipboard.writeText(copiar.dataset.copiar);
+    toast('Copiado', 'O link está na área de transferência.');
+    return;
+  }
+
+  if (alvo('[data-acao="copiar-credencial"]')) {
+    await navigator.clipboard.writeText(gaveta.dataset.credencial || '');
+    toast('Copiado', 'As credenciais estão na área de transferência.');
+    return;
+  }
+
   // --- fila de adição ------------------------------------------------------
   const adicionar = alvo('[data-adicionar]');
   if (adicionar) return abrirAdicionar(Number(adicionar.dataset.adicionar));
@@ -1886,12 +2301,81 @@ setInterval(() => {
   api('/firebase/status').then(pintarFirebase).catch(() => {});
 }, 20000);
 
-(async function iniciar() {
+const CORES_PAPEL = { admin: '#7c3aed', equipe: '#2563eb', candidato: '#16a34a' };
+
+function pintarIdentidade() {
+  const { usuario, campanha, campanhas } = estado;
+
+  $('#usuario-nome').innerHTML = `${esc(usuario.nome)} ` +
+    `<span class="papel-badge" style="background:${CORES_PAPEL[usuario.papel]}28;color:${CORES_PAPEL[usuario.papel]}">${esc(usuario.papel)}</span>`;
+
+  if (campanha) {
+    $('#nome-campanha').textContent = campanha.nome;
+    $('#cargo-campanha').textContent = campanha.cargo || 'Rede de apoio';
+    $('#selo-campanha').textContent = iniciais(campanha.nome).slice(0, 2);
+    $('#selo-campanha').style.background = campanha.cor || 'var(--roxo)';
+    document.title = `${campanha.nome} · Rede de Apoio`;
+  }
+
+  // O seletor só aparece para quem enxerga mais de uma campanha.
+  const seletor = $('#troca-campanha');
+  seletor.hidden = campanhas.length <= 1;
+  if (!seletor.hidden) {
+    seletor.innerHTML = campanhas.map((c) =>
+      `<option value="${esc(c.slug)}" ${c.slug === campanha?.slug ? 'selected' : ''}>${esc(c.nome)}</option>`
+    ).join('');
+  }
+
+  // Esconde o que o papel do usuário não pode usar.
+  for (const item of document.querySelectorAll('[data-permissao]')) {
+    item.hidden = !podeFazer(item.dataset.permissao);
+  }
+  const infra = document.querySelector('[data-so-admin]');
+  if (infra) {
+    infra.hidden = !['conectarWhatsapp', 'configurarFirebase', 'gerirUsuarios'].some(podeFazer);
+  }
+}
+
+$('#troca-campanha').addEventListener('change', async (e) => {
+  estado.campanha = estado.campanhas.find((c) => c.slug === e.target.value);
+  // Trocar de campanha é trocar de base: nada do estado anterior serve.
+  Object.assign(estado, {
+    panorama: null, lista: null, fila: null, conversaAberta: null, pessoaAberta: null
+  });
+  fecharGaveta();
+  await recarregarTudo();
+});
+
+$('#botao-sair').addEventListener('click', async () => {
+  await api('/logout', { method: 'POST' });
+  location.href = '/login';
+});
+
+async function recarregarTudo() {
   estado.config = await api('/config');
-  pintarStatus(await api('/whatsapp/status'));
-  pintarFirebase(await api('/firebase/status'));
-  api('/alertas?limite=1').then((r) => pintarAlertas(r.contagem));
-  api('/conversas?filtro=nao_lidas').then((r) => pintarConversas(r.contagem));
-  api('/formularios').then((r) => { const el = $('#conta-formularios'); if (el) el.textContent = num(r.total); }).catch(() => {});
+  pintarIdentidade();
+  api('/whatsapp/status').then(pintarStatus).catch(() => {});
+  api('/firebase/status').then(pintarFirebase).catch(() => {});
+  api('/alertas?limite=1').then((r) => pintarAlertas(r.contagem)).catch(() => {});
+  api('/conversas?filtro=nao_lidas').then((r) => pintarConversas(r.contagem)).catch(() => {});
   await render();
+}
+
+(async function iniciar() {
+  const eu = await api('/eu');
+  if (!eu?.usuario) { location.href = '/login'; return; }
+
+  estado.usuario = eu.usuario;
+  estado.campanhas = eu.campanhas || [];
+  estado.campanha = eu.campanhaAtiva || estado.campanhas[0] || null;
+  estado.permissoes = eu.permissoes || {};
+
+  if (!estado.campanha) {
+    pintarIdentidade();
+    conteudo.innerHTML = `<div class="alerta"><b>Nenhuma campanha vinculada ao seu acesso.</b>
+      Peça ao administrador para te vincular a uma campanha.</div>`;
+    return;
+  }
+
+  await recarregarTudo();
 })();

@@ -6,11 +6,15 @@
 // Cria um grupo temporário, mexe nele e apaga tudo no fim — a base real
 // não é afetada.
 
-import { db, agora } from './db.js';
+import { db, agora, usarCampanha } from './db.js';
 import { upsertGrupo, upsertPessoa, vincularMembro, registrarMensagem } from './ingest.js';
 import { recomputar } from './scoring.js';
 import * as whatsapp from './whatsapp.js';
 import * as fb from './firestore.js';
+
+// Estes scripts rodam sobre UMA campanha. Escolha com a variável CAMPANHA;
+// sem ela, usa a primeira encontrada em data/campanhas/.
+const CAMPANHA = usarCampanha();
 
 let falhas = 0;
 const ok = (condicao, descricao) => {

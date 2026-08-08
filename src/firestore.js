@@ -10,7 +10,9 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { db, agora, setConfig, getConfig, RAIZ } from './db.js';
+import { db, agora, setConfig, getConfig, RAIZ, campanhaAtual, comCampanha } from './db.js';
+import { porCampanha } from './porcampanha.js';
+import { configDaCampanha } from './contas.js';
 
 export const COLECOES = {
   pessoas: 'pessoas',
@@ -22,68 +24,107 @@ export const COLECOES = {
   mensagens: 'mensagens'
 };
 
-export const estadoFirebase = {
-  configurado: false,
-  conectado: false,
-  projeto: null,
-  erro: null,
-  pendentes: 0,
-  enviados: 0,
-  ultimoEnvio: null,
-  espelharMensagens: false
-};
+// Um cliente, um estado e um loop por campanha: a Cláudia escreve no Firebase
+// dela, o Fernando no dele. Nunca compartilham conexão.
+const conexoes = porCampanha(() => ({
+  cliente: null,
+  temporizador: null,
+  emAndamento: null,
+  estado: {
+    configurado: false,
+    conectado: false,
+    projeto: null,
+    prefixo: null,
+    erro: null,
+    pendentes: 0,
+    enviados: 0,
+    ultimoEnvio: null,
+    espelharMensagens: false
+  }
+}));
 
-let firestore = null;
-let temporizador = null;
-let emAndamento = null;   // promessa do envio em curso, se houver
+/** Estado do Firebase da campanha ativa. */
+export const estadoDoFirebase = () => conexoes.atual().estado;
 
 // --------------------------------------------------------------------- setup
 function carregarEnv() {
   try { process.loadEnvFile(join(RAIZ, '.env')); } catch { /* sem .env, usa o ambiente */ }
 }
 
-/** Caminho do .env pode ser relativo ao projeto (o padrão) ou absoluto. */
 function resolverCaminho(caminho) {
   if (!caminho) return null;
   return isAbsolute(caminho) ? caminho : join(RAIZ, caminho);
 }
 
-function credenciais() {
-  const caminho = resolverCaminho(
-    process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_APPLICATION_CREDENTIALS
-  );
-  if (caminho && existsSync(caminho)) return JSON.parse(readFileSync(caminho, 'utf8'));
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-  if (caminho) {
-    estadoFirebase.erro = `Chave não encontrada em ${caminho}`;
+/**
+ * A chave só vem do .env quando a campanha declara `firebase_prefixo` — ou seja,
+ * quando ela ASSUMIU compartilhar o projeto e ficar numa subcoleção própria.
+ * Sem isso, campanha sem chave própria não conecta: escrever a base do Fernando
+ * dentro do projeto da Cláudia seria pior do que não sincronizar.
+ */
+function credenciais(slug, estado) {
+  const config = configDaCampanha(slug);
+  const compartilhado = Boolean(config?.firebasePrefixo);
+  const caminho = config?.firebaseKey
+    ?? (compartilhado
+      ? resolverCaminho(process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_APPLICATION_CREDENTIALS)
+      : null);
+
+  if (!caminho && !compartilhado) {
+    estado.erro = 'Esta campanha ainda não tem projeto do Firebase. '
+      + 'Coloque a chave em data/campanhas/' + slug + '/firebase-key.json e rode '
+      + '"npm run configurar -- --firebase ' + slug + '".';
+    return null;
   }
+
+  if (caminho && existsSync(caminho)) return JSON.parse(readFileSync(caminho, 'utf8'));
+  if (compartilhado && process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  }
+  if (caminho) estado.erro = `Chave não encontrada em ${caminho}`;
   return null;
 }
 
 /**
- * `clienteDeTeste` existe para os testes automatizados conseguirem exercitar
- * a fila inteira sem depender de rede nem do emulador (que precisa de Java).
+ * Duas formas de isolar os dados de cada candidato no Firebase:
+ *   1. projeto próprio  — cada campanha com a sua chave (recomendado);
+ *   2. projeto único    — mesma chave, coleções sob campanhas/<slug>/…
+ * O caminho abaixo resolve as duas.
+ */
+function caminhoDaColecao(slug, colecao) {
+  const config = configDaCampanha(slug);
+  const prefixo = config?.firebasePrefixo;
+  return prefixo ? `${prefixo}/${slug}/${colecao}` : colecao;
+}
+
+/**
+ * `clienteDeTeste` existe para os testes automatizados exercitarem a fila
+ * inteira sem depender de rede nem do emulador (que precisa de Java).
  */
 export async function iniciarFirebase({ clienteDeTeste = null } = {}) {
   carregarEnv();
-  estadoFirebase.espelharMensagens = process.env.FIRESTORE_ESPELHAR_MENSAGENS === 'true';
+  const slug = campanhaAtual();
+  const conexao = conexoes.atual();
+  const { estado } = conexao;
+
+  estado.espelharMensagens = process.env.FIRESTORE_ESPELHAR_MENSAGENS === 'true';
   atualizarPendentes();
 
   if (clienteDeTeste) {
-    firestore = clienteDeTeste;
-    estadoFirebase.configurado = true;
-    estadoFirebase.conectado = true;
-    estadoFirebase.projeto = 'projeto-de-teste';
-    estadoFirebase.erro = null;
+    conexao.cliente = clienteDeTeste;
+    Object.assign(estado, {
+      configurado: true, conectado: true, projeto: 'projeto-de-teste', erro: null
+    });
     return true;
   }
 
-  const conta = credenciais();
-  const projeto = process.env.FIREBASE_PROJECT_ID || conta?.project_id || null;
+  const conta = credenciais(slug, estado);
+  const projeto = conta?.project_id || process.env.FIREBASE_PROJECT_ID || null;
 
   if (!conta && !process.env.FIRESTORE_EMULATOR_HOST) {
-    estadoFirebase.configurado = false;
-    estadoFirebase.erro = 'Chave do Firebase não encontrada. Veja o passo a passo na aba Firebase.';
+    estado.configurado = false;
+    estado.conectado = false;
+    estado.erro = estado.erro || 'Chave do Firebase não configurada para esta campanha.';
     return false;
   }
 
@@ -91,39 +132,53 @@ export async function iniciarFirebase({ clienteDeTeste = null } = {}) {
     const { initializeApp, cert, getApps } = await import('firebase-admin/app');
     const { getFirestore } = await import('firebase-admin/firestore');
 
-    const app = getApps().length
-      ? getApps()[0]
-      : initializeApp(conta ? { credential: cert(conta), projectId: projeto } : { projectId: projeto });
+    // Um app nomeado por campanha — o SDK permite vários lado a lado.
+    const nomeApp = `campanha-${slug}`;
+    const app = getApps().find((a) => a.name === nomeApp)
+      ?? initializeApp(conta ? { credential: cert(conta), projectId: projeto } : { projectId: projeto }, nomeApp);
 
-    firestore = getFirestore(app);
-    firestore.settings({ ignoreUndefinedProperties: true });
+    conexao.cliente = getFirestore(app);
+    conexao.cliente.settings({ ignoreUndefinedProperties: true });
 
-    estadoFirebase.configurado = true;
-    estadoFirebase.projeto = projeto;
-    estadoFirebase.erro = null;
+    estado.configurado = true;
+    estado.projeto = projeto;
+    estado.prefixo = configDaCampanha(slug)?.firebasePrefixo ?? null;
+    estado.erro = null;
 
     // Ping real: confirma credencial e permissão antes de dizer "conectado".
-    await firestore.collection('_saude').doc('ping').set({ em: new Date(), origem: 'rede-apoio' });
-    estadoFirebase.conectado = true;
-    console.log(`[firebase] conectado ao projeto ${projeto}`);
+    await conexao.cliente.collection('_saude').doc('ping')
+      .set({ em: new Date(), origem: 'rede-apoio', campanha: slug });
+    estado.conectado = true;
+    console.log(`[firebase:${slug}] conectado ao projeto ${projeto}`);
 
-    iniciarLoop();
+    iniciarLoop(slug);
     return true;
   } catch (erro) {
-    estadoFirebase.configurado = Boolean(conta);
-    estadoFirebase.conectado = false;
-    estadoFirebase.erro = erro.message;
-    console.error('[firebase] falha ao conectar:', erro.message);
+    estado.configurado = Boolean(conta);
+    estado.conectado = false;
+    estado.erro = erro.message;
+    console.error(`[firebase:${slug}] falha ao conectar:`, erro.message);
     return false;
   }
 }
 
-function iniciarLoop() {
-  if (temporizador) return;
+function iniciarLoop(slug) {
+  const conexao = conexoes.de(slug);
+  if (conexao.temporizador) return;
   const intervalo = Number(process.env.FIRESTORE_INTERVALO_MS || 15_000);
-  temporizador = setInterval(() => { processarFila().catch(() => {}); }, intervalo);
-  temporizador.unref?.();
+  conexao.temporizador = setInterval(() => {
+    comCampanha(slug, () => processarFila().catch(() => {}));
+  }, intervalo);
+  conexao.temporizador.unref?.();
   processarFila().catch(() => {});
+}
+
+export function desligarFirebase(slug) {
+  const conexao = conexoes.de(slug);
+  if (conexao.temporizador) clearInterval(conexao.temporizador);
+  conexao.temporizador = null;
+  conexao.cliente = null;
+  conexao.estado.conectado = false;
 }
 
 // -------------------------------------------------------------------- outbox
@@ -150,13 +205,13 @@ const inserirFila = () => db.prepare(
 );
 
 function atualizarPendentes() {
-  estadoFirebase.pendentes = db.prepare(
+  conexoes.atual().estado.pendentes = db.prepare(
     'SELECT COUNT(*) AS n FROM outbox WHERE enviado_em IS NULL'
   ).get().n;
 }
 
 export function enfileirar(colecao, docId, dados, operacao = 'set') {
-  if (colecao === COLECOES.mensagens && !estadoFirebase.espelharMensagens) return;
+  if (colecao === COLECOES.mensagens && !conexoes.atual().estado.espelharMensagens) return;
   // Substitui um envio pendente do mesmo documento em vez de empilhar versões.
   db.prepare('DELETE FROM outbox WHERE colecao = ? AND doc_id = ? AND enviado_em IS NULL')
     .run(colecao, docId);
@@ -165,19 +220,22 @@ export function enfileirar(colecao, docId, dados, operacao = 'set') {
 }
 
 export async function processarFila({ limite = 400 } = {}) {
-  if (!firestore) return { enviados: 0 };
+  const conexao = conexoes.atual();
+  if (!conexao.cliente) return { enviados: 0 };
   // Se já existe um envio em curso (o loop de fundo, por exemplo), espera por
   // ele em vez de devolver 0 — senão quem chamou acha que a fila esvaziou.
-  if (emAndamento) return emAndamento;
-  emAndamento = enviarLote(limite);
+  if (conexao.emAndamento) return conexao.emAndamento;
+  conexao.emAndamento = enviarLote(limite, campanhaAtual());
   try {
-    return await emAndamento;
+    return await conexao.emAndamento;
   } finally {
-    emAndamento = null;
+    conexao.emAndamento = null;
   }
 }
 
-async function enviarLote(limite) {
+async function enviarLote(limite, slug) {
+  const conexao = conexoes.de(slug);
+  const { cliente: firestore, estado: estadoFirebase } = conexao;
   try {
     const pendentes = db.prepare(
       'SELECT id, colecao, doc_id, operacao, carga FROM outbox WHERE enviado_em IS NULL ORDER BY id LIMIT ?'
@@ -186,7 +244,7 @@ async function enviarLote(limite) {
 
     const lote = firestore.batch();
     for (const item of pendentes) {
-      const ref = firestore.collection(item.colecao).doc(item.doc_id);
+      const ref = firestore.collection(caminhoDaColecao(slug, item.colecao)).doc(item.doc_id);
       if (item.operacao === 'delete') lote.delete(ref);
       else lote.set(ref, desserializar(item.carga), { merge: true });
     }
@@ -436,14 +494,16 @@ export function sincronizarTudo() {
   for (const a of db.prepare('SELECT id FROM assinaturas').all()) publicarAssinatura(a.id);
   for (const a of db.prepare('SELECT id FROM alertas ORDER BY id DESC LIMIT 200').all()) publicarAlerta(a.id);
   atualizarPendentes();
-  return { pessoas: pessoas.length, pendentes: estadoFirebase.pendentes };
+  return { pessoas: pessoas.length, pendentes: conexoes.atual().estado.pendentes };
 }
 
 export function statusFirebase() {
   atualizarPendentes();
+  const estado = conexoes.atual().estado;
   return {
-    ...estadoFirebase,
-    ultimoEnvio: estadoFirebase.ultimoEnvio || Number(getConfig('firestore_ultimo_envio', 0)) || null,
+    ...estado,
+    campanha: campanhaAtual(),
+    ultimoEnvio: estado.ultimoEnvio || Number(getConfig('firestore_ultimo_envio', 0)) || null,
     erros: db.prepare(
       'SELECT erro, COUNT(*) AS n FROM outbox WHERE enviado_em IS NULL AND erro IS NOT NULL GROUP BY erro LIMIT 3'
     ).all()

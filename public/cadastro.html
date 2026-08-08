@@ -26,7 +26,8 @@
   <div class="folha">
     <div class="topo-form">
       <div class="selo">R</div>
-      <h1>Some à nossa rede de apoio</h1>
+      <h1 id="titulo-campanha">Some à nossa rede de apoio</h1>
+      <p id="cargo-campanha" style="font-weight:600;color:var(--roxo);margin-bottom:6px"></p>
       <p>Preencha em 30 segundos. É assim que a gente sabe quem você é,
          onde você mora e no que dá pra somar.</p>
     </div>
@@ -93,6 +94,7 @@
   </div>
 
   <script>
+    const SLUG = location.pathname.split('/').filter(Boolean)[1] || '';
     const form = document.getElementById('form');
     const caixa = document.getElementById('caixa');
     const erro = document.getElementById('erro');
@@ -106,7 +108,7 @@
       botao.textContent = 'enviando…';
 
       try {
-        const r = await fetch('/api/cadastro', {
+        const r = await fetch('/api/cadastro/' + SLUG, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(dados)
@@ -130,6 +132,21 @@
         botao.disabled = false;
         botao.textContent = 'Assinar e entrar na rede';
       }
+    });
+  
+    // Personaliza o formulário com o nome do candidato.
+    fetch('/api/cadastro/' + SLUG).then((r) => r.json()).then((c) => {
+      if (c.erro) {
+        document.querySelector('.folha').innerHTML =
+          '<div class="alerta">Formulário não encontrado. Confira o link.</div>';
+        return;
+      }
+      document.title = 'Apoie ' + c.nome;
+      document.getElementById('titulo-campanha').textContent = 'Some à rede de ' + c.nome;
+      if (c.cargo) document.getElementById('cargo-campanha').textContent = c.cargo;
+      document.querySelector('.selo').style.background = c.cor;
+      document.querySelector('.selo').textContent =
+        c.nome.split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
     });
   </script>
 </body>

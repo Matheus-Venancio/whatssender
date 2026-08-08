@@ -5,9 +5,13 @@
 //
 // Útil depois de mexer no dicionário de risco: reavalia tudo com as regras novas.
 
-import { db } from './db.js';
+import { db, usarCampanha } from './db.js';
 import { analisarMensagem, RISCOS } from './risco.js';
 import * as fb from './firestore.js';
+
+// Estes scripts rodam sobre UMA campanha. Escolha com a variável CAMPANHA;
+// sem ela, usa a primeira encontrada em data/campanhas/.
+const CAMPANHA = usarCampanha();
 
 const DIA = 86_400_000;
 const tudo = process.argv.includes('--tudo');

@@ -3,10 +3,14 @@
 //
 //   node --no-warnings=ExperimentalWarning src/teste-risco.js
 
-import { db, agora } from './db.js';
+import { db, agora, usarCampanha } from './db.js';
 import { upsertGrupo, upsertPessoa, vincularMembro } from './ingest.js';
 import { detectarRisco, analisarMensagem, RISCOS } from './risco.js';
 import { listarAlertas } from './repo.js';
+
+// Estes scripts rodam sobre UMA campanha. Escolha com a variável CAMPANHA;
+// sem ela, usa a primeira encontrada em data/campanhas/.
+const CAMPANHA = usarCampanha();
 
 let falhas = 0;
 const ok = (condicao, descricao) => {

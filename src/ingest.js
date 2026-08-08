@@ -96,28 +96,44 @@ export function registrarAlerta({ tipo, gravidade = 'info', pessoaId = null, gru
 }
 
 export function retratoDaPessoa(pessoaId) {
-  const p = db.prepare(
-    `SELECT p.id, p.nome, p.nome_wa, p.telefone, p.cidade, p.uf, p.atuacao, p.cadastro_em,
-            f.classificacao, f.engajamento, f.msgs_total
-       FROM pessoas p LEFT JOIN perfil f ON f.id = p.id
-      WHERE p.id = ?`
-  ).get(pessoaId);
+  // A tabela de perfil se chama `faixa`, não `classificacao`, e liga por
+  // `pessoa_id`. O alerta depende deste retrato para saber se a saída dói.
+  const p = db.prepare(`
+    SELECT p.id, p.nome, p.nome_wa, p.telefone, p.cidade, p.uf, p.atuacao, p.cadastro_em,
+           f.faixa, f.engajamento, f.msgs_total,
+           f.ultima_msg_texto, f.ultima_msg_ts, f.tema_principal, f.intencoes
+      FROM pessoas p LEFT JOIN perfil f ON f.pessoa_id = p.id
+     WHERE p.id = ?
+  `).get(pessoaId);
   if (!p) return {};
-  const assinou = db.prepare(
-    `SELECT a.titulo FROM assinaturas s JOIN abaixos a ON a.id = s.abaixo_id WHERE s.pessoa_id = ?`
-  ).all(pessoaId).map((a) => a.titulo);
-  const aindaEstaEm = db.prepare(
-    `SELECT g.nome FROM membros m JOIN grupos g ON g.id = m.grupo_id WHERE m.pessoa_id = ? AND m.saiu_em IS NULL`
-  ).all(pessoaId).map((g) => g.nome);
+
+  const assinou = db.prepare(`
+    SELECT ab.titulo FROM assinaturas s JOIN abaixos ab ON ab.id = s.abaixo_id
+     WHERE s.pessoa_id = ?
+  `).all(pessoaId).map((a) => a.titulo);
+
+  const aindaEstaEm = db.prepare(`
+    SELECT g.nome FROM membros m JOIN grupos g ON g.id = m.grupo_id
+     WHERE m.pessoa_id = ? AND m.saiu_em IS NULL
+  `).all(pessoaId).map((g) => g.nome);
+
+  let intencoes = [];
+  try { intencoes = JSON.parse(p.intencoes || '[]'); } catch { intencoes = []; }
 
   return {
     id: p.id,
-    nome: p.nome || p.nome_wa || p.telefone,
-    classificacao: p.classificacao,
-    engajamento: p.engajamento || 0,
-    mensagens: p.msgs_total || 0,
+    nome: p.nome || p.nome_wa || formatarTelefone(p.telefone),
+    telefone: p.telefone,
     cidade: p.cidade,
     uf: p.uf,
+    atuacao: p.atuacao,
+    classificacao: p.faixa,
+    engajamento: p.engajamento ?? 0,
+    mensagens: p.msgs_total ?? 0,
+    ultimaMensagem: p.ultima_msg_texto,
+    ultimaMensagemEm: p.ultima_msg_ts,
+    temaPrincipal: p.tema_principal,
+    intencoes,
     cadastrado: Boolean(p.cadastro_em),
     assinou,
     aindaEstaEm

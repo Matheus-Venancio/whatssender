@@ -1,11 +1,26 @@
 node_modules/
+.env
+
+# Bancos de dados — um por campanha, mais o de contas.
 data/*.db
 data/*.db-wal
 data/*.db-shm
 data/*.db-journal
-data/auth/
-data/firebase-key.json
-.env
+data/campanhas/*/*.db
+data/campanhas/*/*.db-wal
+data/campanhas/*/*.db-shm
 
-# Os CSVs de leads contêm dado pessoal — não versionar.
+# Sessões do WhatsApp: dão acesso à conta. Nunca versionar.
+data/auth/
+data/campanhas/*/auth/
+
+# Chaves do Firebase: acesso total ao banco de cada campanha.
+data/firebase-key.json
+data/campanhas/*/firebase-key.json
+
+# CSVs de leads contêm dado pessoal.
 data/leads/*.csv
+data/campanhas/*/leads/*.csv
+
+# Backups deixados por refatorações.
+*.bak

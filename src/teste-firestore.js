@@ -4,8 +4,12 @@
 //
 //   node --no-warnings=ExperimentalWarning src/teste-firestore.js
 
-import { db } from './db.js';
+import { db, usarCampanha } from './db.js';
 import * as fb from './firestore.js';
+
+// Estes scripts rodam sobre UMA campanha. Escolha com a variável CAMPANHA;
+// sem ela, usa a primeira encontrada em data/campanhas/.
+const CAMPANHA = usarCampanha();
 
 let falhas = 0;
 const ok = (condicao, descricao) => {
