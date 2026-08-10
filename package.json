@@ -27,7 +27,8 @@
     "teste:trava": "node --no-warnings=ExperimentalWarning src/teste-trava.js",
     "firebase:migrar": "node --no-warnings=ExperimentalWarning src/migrar-firestore.js",
     "limpar-lids": "node --no-warnings=ExperimentalWarning src/limpar-lids.js",
-    "teste:apoio": "node --no-warnings=ExperimentalWarning src/teste-apoio.js"
+    "teste:apoio": "node --no-warnings=ExperimentalWarning src/teste-apoio.js",
+    "restaurar": "node --no-warnings=ExperimentalWarning src/restaurar-do-firestore.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",
