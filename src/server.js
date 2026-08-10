@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { db, PASTA_PUBLICA, PASTA_DADOS, RAIZ, agora, getConfig, comCampanha, campanhasNoDisco } from './db.js';
 import { salvarCadastro, salvarFormularioPautas, registrarEvento } from './ingest.js';
-import { recomputar, PESOS, FAIXAS, CORES_FAIXA } from './scoring.js';
+import { recomputar, PESOS, FAIXAS, CORES_FAIXA, FAIXAS_APOIO, CORES_APOIO } from './scoring.js';
 import { TEMAS, INTENCOES } from './lexicon.js';
 import {
   listarPessoas, obterPessoa, listarGrupos, listarTags, listarAbaixos,
@@ -71,7 +71,8 @@ function filtrosDaUrl(url) {
     busca: pegar('busca'), faixa: pegar('faixa'), grupo: pegar('grupo'),
     tema: pegar('tema'), intencao: pegar('intencao'), cadastro: pegar('cadastro'),
     tag: pegar('tag'), abaixo: pegar('abaixo'), uf: pegar('uf'),
-    semGrupo: pegar('semGrupo'), ordenar: pegar('ordenar', 'engajamento'),
+    semGrupo: pegar('semGrupo'), apoio: pegar('apoio'), origem: pegar('origem'),
+    ordenar: pegar('ordenar', 'engajamento'),
     pagina: Number(p.get('pagina') || 1), porPagina: Number(p.get('porPagina') || 25)
   };
 }
@@ -346,6 +347,7 @@ async function api(req, res, url, sessao) {
         temas: Object.fromEntries(Object.entries(TEMAS).map(([k, v]) => [k, { rotulo: v.rotulo, cor: v.cor }])),
         intencoes: Object.fromEntries(Object.entries(INTENCOES).map(([k, v]) => [k, { rotulo: v.rotulo, cor: v.cor }])),
         faixas: FAIXAS, cores_faixa: CORES_FAIXA, pesos: PESOS,
+        faixas_apoio: FAIXAS_APOIO, cores_apoio: CORES_APOIO,
         campanha: { slug: campanha.slug, nome: campanha.nome, cargo: campanha.cargo, cor: campanha.cor },
         permissoes: contas.PERMISSOES[usuario.papel],
         papel: usuario.papel
@@ -542,7 +544,9 @@ async function api(req, res, url, sessao) {
           abaixo: url.searchParams.get('abaixo') || '', uf: url.searchParams.get('uf') || '',
           cidade: url.searchParams.get('cidade') || '',
           somenteSemGrupo: url.searchParams.get('somenteSemGrupo') || '',
-          somenteAssinantes: url.searchParams.get('somenteAssinantes') || ''
+          somenteAssinantes: url.searchParams.get('somenteAssinantes') || '',
+          apoio: url.searchParams.get('apoio') || '',
+          propensaoMinima: url.searchParams.get('propensaoMinima') || ''
         };
         const lista = adicao.elegiveis({ grupoId, filtros });
         return json(res, { total: lista.length, amostra: lista.slice(0, 12) });
@@ -670,6 +674,12 @@ const servidor = createServer(async (req, res) => {
 // fazem o WhatsApp invalidar o pareamento e pedir o QR de novo.
 // Por isso o sistema para aqui, com instrução, em vez de despejar stack trace.
 servidor.on('error', (erro) => {
+  // Já tomamos a trava da pasta de dados antes de chegar aqui (linha abaixo).
+  // Se o bind da porta falhar, saímos sem soltar essa trava e o próximo
+  // `npm run dev` (ex.: o restart automático do --watch) fica bloqueado por
+  // até 45s achando que ainda estamos vivos. Soltar antes de sair evita isso.
+  soltarTrava();
+
   if (erro.code !== 'EADDRINUSE') {
     console.error('\n❌ Erro ao subir o servidor:', erro.message, '\n');
     process.exit(1);
@@ -697,7 +707,7 @@ servidor.on('error', (erro) => {
 });
 
 // Antes de qualquer coisa: garantir que somos a única instância nesta pasta.
-const trava = tomarTrava();
+const trava = await tomarTrava();
 if (!trava.ok) {
   console.error(mensagemDeTravada(trava));
   process.exit(1);
@@ -771,6 +781,11 @@ async function encerrar(sinal) {
   const prazo = setTimeout(() => process.exit(0), 10_000);
   prazo.unref?.();
 
+  // Solta a pasta ANTES do trabalho lento (fechar WhatsApp, esvaziar fila do
+  // Firestore). Segurar a trava durante um desligamento de até 10s é o que
+  // fazia o reinício do --watch esbarrar na instância que já estava saindo.
+  soltarTrava();
+
   try {
     for (const cliente of clientesSse) { try { cliente.res.end(); } catch { /* já fechou */ } }
     await whatsapp.encerrarTudo();
@@ -780,7 +795,6 @@ async function encerrar(sinal) {
       try { await comCampanha(c.slug, () => firebase.processarFila()); } catch { /* sem rede */ }
     }
     servidor.close();
-    soltarTrava();
     console.log('[encerrado] sessões do WhatsApp preservadas no disco.\n');
   } catch (erro) {
     console.error('[encerrar]', erro.message);

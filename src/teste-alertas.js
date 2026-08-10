@@ -38,13 +38,21 @@ function limparTeste() {
     const p = db.prepare('SELECT id FROM pessoas WHERE telefone = ?').get(tel);
     if (p) db.prepare('DELETE FROM pessoas WHERE id = ?').run(p.id);
   }
-  db.prepare("DELETE FROM outbox WHERE doc_id LIKE '5519900000%'").run();
+  // Sem isto, o que o teste publicou fica pendente na outbox e um
+  // 'firebase:sync' posterior empurra dado de teste para produção.
+  db.prepare("DELETE FROM outbox WHERE doc_id LIKE '5519900000%' OR doc_id LIKE '00000000%' OR doc_id LIKE 'teste-%'").run();
 }
 
 console.log('\nTeste do aviso de saída de grupo (eventos simulados do Baileys)\n');
 limparTeste();
 
 // Cliente falso do Firestore só para conferir que o alerta também é publicado.
+// A campanha usa prefixo (campanhas/<slug>/...): o teste procura no mesmo
+// caminho em que o código grava.
+const { configDaCampanha } = await import('./contas.js');
+const prefixoFb = configDaCampanha(CAMPANHA)?.firebasePrefixo;
+const raiz = prefixoFb ? `${prefixoFb}/${CAMPANHA}/` : '';
+
 const gravados = new Map();
 await fb.iniciarFirebase({
   clienteDeTeste: {
@@ -163,8 +171,8 @@ ok(db.prepare('SELECT COUNT(*) AS n FROM alertas WHERE grupo_id = ?').get(grupoI
 // ------------------------------------------------------------- 5) Firestore
 console.log('\n5) Publicação no Firestore');
 await fb.processarFila();
-ok([...gravados.keys()].some((k) => k === `alertas/${saida.id}`), 'alerta da saída foi para a coleção alertas');
-const docPessoa = gravados.get(`pessoas/${ENGAJADA}`);
+ok([...gravados.keys()].some((k) => k === `${raiz}alertas/${saida.id}`), 'alerta da saída foi para a coleção alertas');
+const docPessoa = gravados.get(`${raiz}pessoas/${ENGAJADA}`);
 ok(Boolean(docPessoa), 'ficha da pessoa republicada depois da saída');
 ok(docPessoa?.grupos?.some((g) => g.ativo === false), 'documento mostra o grupo com ativo=false');
 

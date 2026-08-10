@@ -118,8 +118,19 @@ const soDigitos = (jid) => String(jid || '').split('@')[0].split(':')[0];
 
 function normalizarJid(jid) {
   if (!jid) return null;
-  const id = soDigitos(jid);
-  if (!/^\d{10,15}$/.test(id)) return null;   // ignora @lid sem número resolvido
+  const bruto = String(jid);
+
+  // @lid é o identificador interno de quem esconde o número. Convertê-lo em
+  // "@s.whatsapp.net" cria uma pessoa-fantasma com telefone de 15 dígitos:
+  // aparece na contagem, suja a classificação e não dá para mandar mensagem.
+  // Esta guarda fica aqui, na base, para valer em todos os pontos de entrada.
+  if (bruto.endsWith('@lid')) return null;
+
+  const id = soDigitos(bruto);
+  if (!/^\d{10,15}$/.test(id)) return null;
+  // Nenhum telefone real do WhatsApp passa de 14 dígitos; acima disso é LID
+  // que chegou sem o sufixo.
+  if (id.length > 14) return null;
   return `${id}@s.whatsapp.net`;
 }
 
@@ -131,11 +142,18 @@ function normalizarJid(jid) {
  */
 function jidDeParticipante(bruto) {
   if (!bruto) return null;
-  if (typeof bruto === 'string') return normalizarJid(bruto);
-  return normalizarJid(bruto.phoneNumber)
-    ?? normalizarJid(bruto.jid)
-    ?? normalizarJid(bruto.id)
-    ?? normalizarJid(bruto.lid);
+  if (typeof bruto === 'string') {
+    // Um LID nunca é telefone: aceitá-lo cria uma pessoa fantasma na base,
+    // com um "número" de 15 dígitos para o qual é impossível mandar mensagem.
+    return bruto.endsWith('@lid') ? null : normalizarJid(bruto);
+  }
+  const candidatos = [bruto.phoneNumber, bruto.jid, bruto.id]
+    .filter((c) => c && !String(c).endsWith('@lid'));
+  for (const candidato of candidatos) {
+    const jid = normalizarJid(candidato);
+    if (jid) return jid;
+  }
+  return null;
 }
 
 const nomeDeParticipante = (bruto) =>
@@ -642,8 +660,39 @@ export async function conectar() {
     retryRequestDelayMs: 1_000
   });
 
+  // A agenda do celular. Vem em lote no pareamento (`contacts.set`) e depois
+  // aos poucos (`contacts.upsert`). Cada contato vira uma pessoa com origem
+  // 'contato' — matéria-prima da classificação de propensão a apoiar.
+  const guardarContatos = (contatos = []) => {
+    let novos = 0;
+    for (const contato of contatos) {
+      const jid = jidDeParticipante(contato);
+      if (!jid) continue;
+      // O `name` só existe quando a pessoa está salva na agenda; `notify` é o
+      // nome que ela mesma pôs no perfil e não indica vínculo nenhum.
+      const nomeAgenda = contato.name || null;
+      const pessoaId = upsertPessoa({
+        jid,
+        nomeWa: nomeAgenda || contato.notify || contato.verifiedName || null,
+        origem: 'contato'
+      });
+      const r = db.prepare(`
+        UPDATE pessoas SET na_agenda = ?, nome_agenda = COALESCE(?, nome_agenda)
+         WHERE id = ? AND (na_agenda <> ? OR nome_agenda IS NULL)
+      `).run(nomeAgenda ? 1 : 0, nomeAgenda, pessoaId, nomeAgenda ? 1 : 0);
+      if (r.changes) novos++;
+    }
+    if (novos) {
+      const total = db.prepare("SELECT COUNT(*) AS n FROM pessoas WHERE na_agenda = 1").get().n;
+      console.log(`[whatsapp:${slug}] agenda: ${novos} contato(s) atualizados (${total} salvos no celular)`);
+      emitir('contatos', { atualizados: novos, naAgenda: total });
+      agendarRecalculo();
+    }
+  };
+
   if (espelharHistorico) {
-    sessao().sock.ev.on('messaging-history.set', aqui(({ messages = [], progress, isLatest }) => {
+    sessao().sock.ev.on('messaging-history.set', aqui(({ messages = [], contacts = [], progress, isLatest }) => {
+      guardarContatos(contacts);
       const antes = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n;
       for (const antiga of messages) {
         try { processarMensagem(antiga); } catch { /* mensagem antiga em formato estranho */ }
@@ -655,6 +704,10 @@ export async function conectar() {
       agendarRecalculo();
     }));
   }
+
+  sessao().sock.ev.on('contacts.set', aqui(({ contacts }) => guardarContatos(contacts)));
+  sessao().sock.ev.on('contacts.upsert', aqui((contatos) => guardarContatos(contatos)));
+  sessao().sock.ev.on('contacts.update', aqui((contatos) => guardarContatos(contatos)));
 
   sessao().sock.ev.on('creds.update', saveCreds);   // não toca no banco, dispensa contexto
 

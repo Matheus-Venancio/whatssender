@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node --no-warnings=ExperimentalWarning src/server.js",
-    "dev": "node --no-warnings=ExperimentalWarning --watch src/server.js",
+    "dev": "node --no-warnings=ExperimentalWarning --watch --env-file-if-exists=.env.dev src/server.js",
     "configurar": "node --no-warnings=ExperimentalWarning src/configurar.js",
     "importar": "node --no-warnings=ExperimentalWarning src/importar-leads.js",
     "producao": "node --no-warnings=ExperimentalWarning src/importar-leads.js --limpar",
@@ -17,13 +17,17 @@
     "filtrar-uf": "node --no-warnings=ExperimentalWarning src/filtrar-uf.js",
     "firebase:sync": "node --no-warnings=ExperimentalWarning src/sincronizar-firebase.js",
     "firebase:previa": "node --no-warnings=ExperimentalWarning src/sincronizar-firebase.js --teste",
-    "teste": "node --no-warnings=ExperimentalWarning src/teste-firestore.js && node --no-warnings=ExperimentalWarning src/teste-alertas.js && node --no-warnings=ExperimentalWarning src/teste-risco.js && node --no-warnings=ExperimentalWarning src/teste-conversa.js && node --no-warnings=ExperimentalWarning src/teste-adicao.js && node --no-warnings=ExperimentalWarning src/teste-contas.js",
+    "teste": "node --no-warnings=ExperimentalWarning src/teste-firestore.js && node --no-warnings=ExperimentalWarning src/teste-alertas.js && node --no-warnings=ExperimentalWarning src/teste-risco.js && node --no-warnings=ExperimentalWarning src/teste-conversa.js && node --no-warnings=ExperimentalWarning src/teste-adicao.js && node --no-warnings=ExperimentalWarning src/teste-contas.js && node --no-warnings=ExperimentalWarning src/teste-trava.js && node --no-warnings=ExperimentalWarning src/teste-apoio.js",
     "teste:firestore": "node --no-warnings=ExperimentalWarning src/teste-firestore.js",
     "teste:alertas": "node --no-warnings=ExperimentalWarning src/teste-alertas.js",
     "teste:risco": "node --no-warnings=ExperimentalWarning src/teste-risco.js",
     "teste:conversa": "node --no-warnings=ExperimentalWarning src/teste-conversa.js",
     "teste:adicao": "node --no-warnings=ExperimentalWarning src/teste-adicao.js",
-    "teste:contas": "node --no-warnings=ExperimentalWarning src/teste-contas.js"
+    "teste:contas": "node --no-warnings=ExperimentalWarning src/teste-contas.js",
+    "teste:trava": "node --no-warnings=ExperimentalWarning src/teste-trava.js",
+    "firebase:migrar": "node --no-warnings=ExperimentalWarning src/migrar-firestore.js",
+    "limpar-lids": "node --no-warnings=ExperimentalWarning src/limpar-lids.js",
+    "teste:apoio": "node --no-warnings=ExperimentalWarning src/teste-apoio.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",

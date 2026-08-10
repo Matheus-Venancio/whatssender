@@ -81,6 +81,12 @@ if (!totalPessoas) {
   process.exit(1);
 }
 
+// Quando a campanha usa prefixo, as coleções ficam em campanhas/<slug>/<nome>.
+// O teste precisa procurar no mesmo lugar em que o código grava.
+const { configDaCampanha } = await import('./contas.js');
+const prefixo = configDaCampanha(CAMPANHA)?.firebasePrefixo;
+const raiz = prefixo ? `${prefixo}/${CAMPANHA}/` : '';
+
 const cliente = criarClienteFalso();
 await fb.iniciarFirebase({ clienteDeTeste: cliente });
 
@@ -119,7 +125,7 @@ ok(db.prepare('SELECT COUNT(*) AS n FROM outbox WHERE enviado_em IS NULL').get()
 
 // A fila serializa em JSON no meio do caminho. Se as datas não forem
 // reconstruídas, elas chegam ao Firestore como string em vez de Timestamp.
-const gravado = cliente._armazem.get(`pessoas/${doc.telefone}`);
+const gravado = cliente._armazem.get(`${raiz}pessoas/${doc.telefone}`);
 ok(gravado?.atualizadoEm instanceof Date,
   `atualizadoEm chega como Date depois da fila (${gravado?.atualizadoEm?.constructor?.name})`);
 ok(gravado?.cadastroEm instanceof Date, 'cadastroEm sobrevive à serialização');
@@ -129,7 +135,7 @@ ok(gravado?.cadastroEm?.getTime() === doc.cadastroEm.getTime(),
   `valor da data preservado (${gravado?.cadastroEm?.toISOString()})`);
 
 const colecoes = [...cliente._armazem.keys()].reduce((acc, c) => {
-  const nome = c.split('/')[0];
+  const nome = c.slice(raiz.length).split('/')[0];
   acc[nome] = (acc[nome] || 0) + 1;
   return acc;
 }, {});
@@ -164,7 +170,7 @@ const idAlerta = db.prepare(`
 `).run(alvo, grupoTeste?.id ?? null, Date.now()).lastInsertRowid;
 fb.publicarAlerta(Number(idAlerta));
 await fb.processarFila();
-const alertaGravado = cliente._armazem.get(`alertas/${idAlerta}`);
+const alertaGravado = cliente._armazem.get(`${raiz}alertas/${idAlerta}`);
 ok(Boolean(alertaGravado), 'alerta chegou na coleção alertas');
 ok(alertaGravado?.tipo === 'saiu_grupo' && alertaGravado?.pessoa?.telefone, 'alerta traz tipo e a pessoa junto');
 db.prepare('DELETE FROM alertas WHERE id = ?').run(idAlerta);

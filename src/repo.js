@@ -13,7 +13,8 @@ const SELECT_BASE = `
          f.engajamento, f.faixa, f.msgs_total, f.msgs_30d, f.msgs_7d,
          f.reacoes_dadas, f.reacoes_recebidas, f.respostas_dadas, f.respostas_recebidas,
          f.midias, f.grupos_count, f.ultima_msg_ts, f.ultima_msg_texto, f.ultima_msg_grupo,
-         f.dias_sem_falar, f.tema_principal, f.intencoes, f.completude, f.proxima_acao
+         f.dias_sem_falar, f.tema_principal, f.intencoes, f.completude, f.proxima_acao,
+         f.propensao, f.faixa_apoio, f.motivos_apoio, p.na_agenda, p.nome_agenda
     FROM pessoas p
     LEFT JOIN perfil f ON f.pessoa_id = p.id
 `;
@@ -24,6 +25,7 @@ const ORDENACOES = {
   antigos: 'f.ultima_msg_ts ASC NULLS LAST',
   nome: 'COALESCE(NULLIF(p.nome, \'\'), p.nome_wa) COLLATE NOCASE ASC',
   completude: 'f.completude ASC, f.engajamento DESC',
+  propensao: 'f.propensao DESC, f.engajamento DESC',
   novos: 'p.primeiro_visto DESC'
 };
 
@@ -40,6 +42,8 @@ function enriquecer(linha) {
       rotulo: INTENCOES[i]?.rotulo ?? i,
       cor: INTENCOES[i]?.cor ?? '#94a3b8'
     })),
+    motivos_apoio: linha.motivos_apoio ? JSON.parse(linha.motivos_apoio) : [],
+    na_agenda: Boolean(linha.na_agenda),
     tema_principal_rotulo: linha.tema_principal ? TEMAS[linha.tema_principal]?.rotulo : null,
     tema_principal_cor: linha.tema_principal ? TEMAS[linha.tema_principal]?.cor : null,
     local: [linha.cidade, linha.uf].filter(Boolean).join('/') || null,
@@ -89,6 +93,7 @@ export function listarPessoas(filtros = {}) {
   const {
     busca = '', faixa = '', grupo = '', tema = '', intencao = '',
     cadastro = '', tag = '', abaixo = '', uf = '', semGrupo = '',
+    apoio = '', origem = '',
     ordenar = 'engajamento', pagina = 1, porPagina = 25
   } = filtros;
 
@@ -125,6 +130,8 @@ export function listarPessoas(filtros = {}) {
     params.push(abaixo);
   }
   if (uf) { where.push('p.uf = ?'); params.push(uf); }
+  if (apoio) { where.push('f.faixa_apoio = ?'); params.push(apoio); }
+  if (origem) { where.push('p.origem = ?'); params.push(origem); }
   if (semGrupo === 'sim') {
     where.push('NOT EXISTS (SELECT 1 FROM membros m WHERE m.pessoa_id = p.id AND m.saiu_em IS NULL)');
   }
@@ -409,6 +416,16 @@ export function panorama() {
     'SELECT faixa, COUNT(*) AS n FROM perfil GROUP BY faixa'
   ).all();
 
+  // Propensão a apoiar — a leitura que serve para campanha sem abaixo-assinado.
+  const apoio = db.prepare(
+    'SELECT faixa_apoio AS faixa, COUNT(*) AS n FROM perfil GROUP BY faixa_apoio'
+  ).all();
+
+  // De onde cada pessoa veio: cadastro, contato do celular ou grupo.
+  const origens = db.prepare(
+    'SELECT origem, COUNT(*) AS n FROM pessoas GROUP BY origem'
+  ).all();
+
   const temas = db.prepare(`
     SELECT tema, COUNT(*) AS pessoas, SUM(mencoes) AS mencoes
       FROM temas_pessoa GROUP BY tema ORDER BY pessoas DESC
@@ -468,6 +485,15 @@ export function panorama() {
       db.prepare('SELECT AVG(completude) AS m FROM perfil').get().m || 0
     ),
     assinaturas: contar('SELECT COUNT(*) AS n FROM assinaturas'),
+    na_agenda: contar('SELECT COUNT(*) AS n FROM pessoas WHERE na_agenda = 1'),
+    provaveis: contar("SELECT COUNT(*) AS n FROM perfil WHERE faixa_apoio = 'Provável apoiador'"),
+    // Quem tem chance de apoiar e ainda está fora dos grupos: a fila natural
+    // de trabalho de uma campanha que não tem abaixo-assinado.
+    provaveis_fora: contar(`
+      SELECT COUNT(*) AS n FROM perfil f JOIN pessoas p ON p.id = f.pessoa_id
+       WHERE f.faixa_apoio IN ('Provável apoiador','Possível apoiador')
+         AND NOT EXISTS (SELECT 1 FROM membros m
+                          WHERE m.pessoa_id = p.id AND m.saiu_em IS NULL)`),
     assinantes_sem_grupo: contar(`
       SELECT COUNT(*) AS n FROM pessoas p
        WHERE p.cadastro_em IS NOT NULL
@@ -477,6 +503,8 @@ export function panorama() {
       hoje - 30 * DIA
     ),
     faixas,
+    apoio,
+    origens,
     temas,
     cidades,
     ufs,

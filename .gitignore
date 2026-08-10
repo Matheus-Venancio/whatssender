@@ -24,3 +24,6 @@ data/campanhas/*/leads/*.csv
 
 # Backups deixados por refatorações.
 *.bak
+
+# Arquivo de desenvolvimento — não vai para produção.
+.env.dev

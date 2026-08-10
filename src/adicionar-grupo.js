@@ -96,6 +96,13 @@ export function elegiveis({ grupoId, filtros = {} }) {
     params.push(filtros.abaixo);
   }
   if (filtros.uf) { onde.push('p.uf = ?'); params.push(filtros.uf); }
+  if (filtros.apoio) { onde.push('f.faixa_apoio = ?'); params.push(filtros.apoio); }
+  if (filtros.propensaoMinima) {
+    onde.push('COALESCE(f.propensao, 0) >= ?');
+    params.push(Number(filtros.propensaoMinima));
+  }
+  // Quem já registrou atrito nunca entra numa fila de adição.
+  onde.push("COALESCE(f.faixa_apoio, 'Sem sinal') <> 'Não abordar'");
   if (filtros.cidade) { onde.push('LOWER(p.cidade) = LOWER(?)'); params.push(filtros.cidade); }
   if (filtros.somenteSemGrupo === true || filtros.somenteSemGrupo === 'sim') {
     onde.push('NOT EXISTS (SELECT 1 FROM membros m2 WHERE m2.pessoa_id = p.id AND m2.saiu_em IS NULL)');
@@ -107,8 +114,11 @@ export function elegiveis({ grupoId, filtros = {} }) {
   return db.prepare(`
     SELECT p.id, p.telefone, p.wa_jid,
            COALESCE(NULLIF(p.nome,''), p.nome_wa, p.telefone) AS nome,
-           p.cidade, p.uf
+           p.cidade, p.uf, p.na_agenda,
+           COALESCE(f.propensao, 0) AS propensao,
+           COALESCE(f.faixa_apoio, 'Sem sinal') AS faixa_apoio
       FROM pessoas p
+      LEFT JOIN perfil f ON f.pessoa_id = p.id
      WHERE p.telefone IS NOT NULL AND LENGTH(p.telefone) >= 12
        -- nunca esteve neste grupo (inclusive não saiu dele antes)
        AND NOT EXISTS (SELECT 1 FROM membros m WHERE m.pessoa_id = p.id AND m.grupo_id = ?)
@@ -117,7 +127,8 @@ export function elegiveis({ grupoId, filtros = {} }) {
                         WHERE f.pessoa_id = p.id AND f.grupo_id = ?
                           AND f.situacao IN ('pendente','adicionado','convidado'))
        ${onde.length ? `AND ${onde.join(' AND ')}` : ''}
-     ORDER BY (SELECT COUNT(*) FROM assinaturas s3 WHERE s3.pessoa_id = p.id) DESC,
+     ORDER BY COALESCE(f.propensao, 0) DESC,
+              (SELECT COUNT(*) FROM assinaturas s3 WHERE s3.pessoa_id = p.id) DESC,
               p.cadastro_em DESC
   `).all(grupoId, grupoId, ...params.slice(1));
 }

@@ -10,7 +10,7 @@ const estado = {
   vista: 'panorama',
   panorama: null,
   config: null,
-  filtros: { busca: '', faixa: '', grupo: '', tema: '', intencao: '', cadastro: '', tag: '', abaixo: '', uf: '', semGrupo: '', ordenar: 'engajamento', pagina: 1, porPagina: 25 },
+  filtros: { busca: '', faixa: '', grupo: '', tema: '', intencao: '', cadastro: '', tag: '', abaixo: '', uf: '', semGrupo: '', apoio: '', origem: '', ordenar: 'engajamento', pagina: 1, porPagina: 25 },
   lista: null,
   fila: null,
   whatsapp: null,
@@ -62,6 +62,7 @@ function iniciais(nome) {
 }
 
 const corFaixa = (faixa) => estado.config?.cores_faixa?.[faixa] || '#94a3b8';
+const corApoio = (faixa) => estado.config?.cores_apoio?.[faixa] || '#94a3b8';
 
 function badgeFaixa(faixa) {
   const cor = corFaixa(faixa);
@@ -330,6 +331,8 @@ VISTAS.pessoas = async () => {
       <select id="fx-intencao">${opcoes(Object.entries(estado.config.intencoes).map(([k, v]) => [k, v.rotulo]), f.intencao, 'Todo sinal')}</select>
       <select id="fx-abaixo">${opcoes(p.abaixos.map((a) => [a.chave, a.titulo]), f.abaixo, 'Todo abaixo-assinado')}</select>
       <select id="fx-uf">${opcoes(p.ufs.map((u) => [u.uf, `${u.uf} (${u.n})`]), f.uf, 'Todo estado')}</select>
+      <select id="fx-apoio">${opcoes((estado.config.faixas_apoio || []).map((x) => [x, x]), f.apoio, 'Toda propensão')}</select>
+      <select id="fx-origem">${opcoes([['contato','Contato do celular'],['grupo','Veio de grupo'],['abaixo-assinado','Assinou'],['formulario_pautas','Formulário']], f.origem, 'Toda origem')}</select>
       <select id="fx-cadastro">${opcoes([['sim', 'Só quem assinou'], ['nao', 'Só quem falta assinar']], f.cadastro, 'Cadastro: todos')}</select>
       <select id="fx-semGrupo">${opcoes([['sim', 'Fora dos grupos']], f.semGrupo, 'Grupo: todos')}</select>
       <select id="fx-ordenar">${opcoes([
@@ -347,7 +350,7 @@ VISTAS.pessoas = async () => {
         <thead>
           <tr>
             <th>Pessoa</th><th>Cidade</th><th>Atuação</th>
-            <th>Última resposta no grupo</th><th>Classificação</th><th>Interesse</th>
+            <th>Última resposta no grupo</th><th>Chance de apoiar</th><th>Classificação</th><th>Interesse</th>
           </tr>
         </thead>
         <tbody>
@@ -372,7 +375,8 @@ VISTAS.pessoas = async () => {
 
   for (const [id, chave] of [['#fx-faixa', 'faixa'], ['#fx-grupo', 'grupo'], ['#fx-tema', 'tema'],
     ['#fx-intencao', 'intencao'], ['#fx-cadastro', 'cadastro'], ['#fx-ordenar', 'ordenar'],
-    ['#fx-abaixo', 'abaixo'], ['#fx-uf', 'uf'], ['#fx-semGrupo', 'semGrupo']]) {
+    ['#fx-abaixo', 'abaixo'], ['#fx-uf', 'uf'], ['#fx-semGrupo', 'semGrupo'],
+    ['#fx-apoio', 'apoio'], ['#fx-origem', 'origem']]) {
     $(id).addEventListener('change', (e) => {
       estado.filtros[chave] = e.target.value;
       estado.filtros.pagina = 1;
@@ -408,6 +412,18 @@ function linhaPessoa(x) {
           : x.grupos.length
             ? '<span class="vazio">está no grupo e nunca escreveu</span>'
             : '<span class="vazio">ainda não está em nenhum grupo</span>'}
+      </td>
+      <td style="min-width:150px">
+        ${x.faixa_apoio ? `
+          <span class="faixa-badge" style="background:${corApoio(x.faixa_apoio)}1a;color:${corApoio(x.faixa_apoio)}">
+            ${esc(x.faixa_apoio)}
+          </span>
+          <div style="margin-top:6px">
+            <span class="barra" style="display:block"><i style="width:${x.propensao || 0}%;background:${corApoio(x.faixa_apoio)}"></i></span>
+            <span class="sub">${x.propensao || 0}/100${x.na_agenda ? ' · na agenda' : ''}</span>
+          </div>
+          ${x.motivos_apoio?.length ? `<div class="sub" style="margin-top:4px;line-height:1.35">${esc(x.motivos_apoio[0])}</div>` : ''}
+        ` : '<span class="vazio">—</span>'}
       </td>
       <td style="min-width:130px">
         ${badgeFaixa(x.faixa)}
@@ -1169,7 +1185,7 @@ async function abrirAdicionar(grupoId) {
   const grupos = await api('/grupos');
   const grupo = grupos.find((g) => g.id === grupoId);
   estado.panorama ??= await api('/panorama');
-  estado.adicionar = { grupoId, filtros: { somenteSemGrupo: 'sim', somenteAssinantes: 'sim', abaixo: '', uf: 'SP', cidade: '' } };
+  estado.adicionar = { grupoId, filtros: { somenteSemGrupo: 'sim', somenteAssinantes: '', abaixo: '', uf: '', cidade: '', apoio: '' } };
 
   gaveta.classList.add('aberto');
   overlay.classList.add('aberto');
@@ -1202,6 +1218,13 @@ async function desenharAdicionar(grupo) {
       <div class="bloco">
         <h4>Quem entra na fila</h4>
         <div class="campo">
+          <label>Chance de apoiar</label>
+          <select id="ad-apoio">${opcoes(
+            (estado.config.faixas_apoio || []).filter((x) => x !== 'Não abordar').map((x) => [x, x]),
+            filtros.apoio, 'Qualquer uma'
+          )}</select>
+        </div>
+        <div class="campo">
           <label>Abaixo-assinado</label>
           <select id="ad-abaixo">${opcoes(estado.panorama.abaixos.map((a) => [a.chave, a.titulo]), filtros.abaixo, 'Qualquer um')}</select>
         </div>
@@ -1230,7 +1253,10 @@ async function desenharAdicionar(grupo) {
         <div style="font-size:30px;font-weight:680;letter-spacing:-.03em">${num(previa.total)}</div>
         <div style="font-size:12.5px;color:var(--tinta-3);margin-bottom:12px">pessoa(s) elegíveis para este grupo</div>
         ${previa.amostra.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap">
-          ${previa.amostra.slice(0, 8).map((p) => chip(p.nome.split(' ').slice(0, 2).join(' '), '#5b21b6')).join('')}
+          ${previa.amostra.slice(0, 8).map((p) => chip(
+            `${p.nome.split(' ').slice(0, 2).join(' ')} · ${p.propensao ?? 0}`,
+            corApoio(p.faixa_apoio)
+          )).join('')}
           ${previa.total > 8 ? `<span class="sub" style="align-self:center">e mais ${num(previa.total - 8)}</span>` : ''}
         </div>` : '<p class="vazio">Ninguém corresponde a esses filtros.</p>'}
         ${previa.total ? `
@@ -1248,6 +1274,7 @@ async function desenharAdicionar(grupo) {
           biblioteca contorna. O que dá para fazer é o que este painel faz: você clica
           <b>uma vez</b> e o sistema adiciona sozinho, devagar, por horas.
         </div>
+        <div class="linha-dado"><span class="k">Ordem</span><span class="v">quem tem mais chance de apoiar entra primeiro</span></div>
         <div class="linha-dado"><span class="k">Ritmo</span><span class="v">1 pessoa a cada ${f.limites.intervaloMin}–${f.limites.intervaloMax}s (aleatório)</span></div>
         <div class="linha-dado"><span class="k">Teto</span><span class="v">${f.limites.porDia}/dia · ${f.limites.porHora}/hora</span></div>
         <div class="linha-dado"><span class="k">Horário</span><span class="v">${f.limites.horaInicio}h às ${f.limites.horaFim}h</span></div>
@@ -1269,7 +1296,8 @@ async function desenharAdicionar(grupo) {
         </button>` : ''}
     </div>`;
 
-  for (const [id, chave] of [['#ad-abaixo', 'abaixo'], ['#ad-uf', 'uf'], ['#ad-cidade', 'cidade']]) {
+  for (const [id, chave] of [['#ad-abaixo', 'abaixo'], ['#ad-uf', 'uf'], ['#ad-cidade', 'cidade'],
+    ['#ad-apoio', 'apoio']]) {
     const el = $(id, gaveta);
     el?.addEventListener('change', () => {
       estado.adicionar.filtros[chave] = el.value;
@@ -2103,7 +2131,7 @@ document.addEventListener('click', async (e) => {
   }
 
   if (alvo('[data-acao="limpar-filtros"]')) {
-    estado.filtros = { busca: '', faixa: '', grupo: '', tema: '', intencao: '', cadastro: '', tag: '', abaixo: '', uf: '', semGrupo: '', ordenar: 'engajamento', pagina: 1, porPagina: 25 };
+    estado.filtros = { busca: '', faixa: '', grupo: '', tema: '', intencao: '', cadastro: '', tag: '', abaixo: '', uf: '', semGrupo: '', apoio: '', origem: '', ordenar: 'engajamento', pagina: 1, porPagina: 25 };
     return render();
   }
 

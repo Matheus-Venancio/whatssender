@@ -1,65 +1,87 @@
 rules_version = '2';
 
 // Base de apoiadores — dado pessoal com finalidade política (LGPD).
-// Regra de ouro: NADA é público. O painel escreve pelo Admin SDK (conta de
-// serviço), que ignora estas regras; elas existem para bloquear qualquer
-// acesso vindo de app cliente, web ou chave vazada.
+//
+// Estrutura: campanhas/<slug>/<colecao>/<doc>
+// Cada candidato tem a própria árvore. A regra abaixo garante que um usuário
+// da campanha A não consiga ler a árvore da campanha B nem por engano.
+//
+// Regra de ouro: NADA é público. O servidor escreve pelo Admin SDK (conta de
+// serviço), que ignora estas regras; elas existem para bloquear acesso vindo
+// de app cliente, web ou chave vazada.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Equipe autorizada: usuários com custom claim `equipe: true`.
-    // Defina com admin.auth().setCustomUserClaims(uid, { equipe: true }).
+    // Usuário da equipe: custom claim `equipe: true`.
+    // Defina com admin.auth().setCustomUserClaims(uid, { equipe: true, campanha: 'claudia' }).
     function daEquipe() {
       return request.auth != null && request.auth.token.equipe == true;
     }
 
-    function coordenacao() {
-      return daEquipe() && request.auth.token.papel == 'coordenacao';
+    // O vínculo com a campanha é o que separa um cliente do outro.
+    function daCampanha(slug) {
+      return daEquipe() && request.auth.token.campanha == slug;
     }
 
-    // Fichas dos apoiadores: leitura pela equipe, escrita só pelo servidor.
-    match /pessoas/{telefone} {
-      allow read: if daEquipe();
-      allow write: if false;
+    function coordenacao(slug) {
+      return daCampanha(slug) && request.auth.token.papel == 'coordenacao';
     }
 
-    match /grupos/{jid} {
-      allow read: if daEquipe();
-      allow write: if false;
+    // Administrador da agência enxerga todas as campanhas.
+    function admin() {
+      return request.auth != null && request.auth.token.admin == true;
     }
 
-    match /abaixos/{chave} {
-      allow read: if daEquipe();
+    match /campanhas/{slug} {
+      allow read: if daCampanha(slug) || admin();
       allow write: if false;
-    }
 
-    // Assinaturas contêm o dado bruto do lead — só a coordenação vê.
-    match /assinaturas/{leadId} {
-      allow read: if coordenacao();
-      allow write: if false;
-    }
+      // Fichas dos apoiadores.
+      match /pessoas/{telefone} {
+        allow read: if daCampanha(slug) || admin();
+        allow write: if false;
+      }
 
-    match /eventos/{id} {
-      allow read: if daEquipe();
-      allow write: if false;
-    }
+      match /grupos/{jid} {
+        allow read: if daCampanha(slug) || admin();
+        allow write: if false;
+      }
 
-    match /alertas/{id} {
-      allow read: if daEquipe();
-      allow write: if false;
-    }
+      match /abaixos/{chave} {
+        allow read: if daCampanha(slug) || admin();
+        allow write: if false;
+      }
 
-    // Histórico de mensagens de grupo: o mais sensível da base.
-    match /mensagens/{id} {
-      allow read: if coordenacao();
-      allow write: if false;
+      match /alertas/{id} {
+        allow read: if daCampanha(slug) || admin();
+        allow write: if false;
+      }
+
+      match /eventos/{id} {
+        allow read: if daCampanha(slug) || admin();
+        allow write: if false;
+      }
+
+      // Assinaturas trazem o lead bruto do Meta — só a coordenação.
+      match /assinaturas/{leadId} {
+        allow read: if coordenacao(slug) || admin();
+        allow write: if false;
+      }
+
+      // Histórico de mensagens de grupo: o mais sensível da base.
+      match /mensagens/{id} {
+        allow read: if coordenacao(slug) || admin();
+        allow write: if false;
+      }
     }
 
     match /_saude/{doc} {
       allow read, write: if false;
     }
 
-    // Qualquer coleção não prevista fica fechada.
+    // Qualquer coleção fora da estrutura acima fica fechada. Isso inclui as
+    // coleções antigas na raiz (pessoas/, grupos/…), que foram migradas para
+    // dentro de campanhas/ e não devem voltar a existir.
     match /{document=**} {
       allow read, write: if false;
     }

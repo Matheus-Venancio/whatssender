@@ -22,6 +22,9 @@ const JID_GRUPO = '000000000000000777@g.us';
 const PREFIXO = '55199777';
 
 function limpar() {
+  // Restrito ao prefixo DESTE teste. Um padrão amplo como '5519%' apagaria
+  // da outbox gente real esperando para subir ao Firestore.
+  db.prepare(`DELETE FROM outbox WHERE doc_id LIKE '${PREFIXO}%' OR doc_id = ?`).run(JID_GRUPO);
   const g = db.prepare('SELECT id FROM grupos WHERE wa_jid = ?').get(JID_GRUPO);
   if (g) db.prepare('DELETE FROM grupos WHERE id = ?').run(g.id);
   db.prepare(`DELETE FROM pessoas WHERE telefone LIKE '${PREFIXO}%'`).run();

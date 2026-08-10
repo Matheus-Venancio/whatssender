@@ -76,6 +76,7 @@ console.log('\n4) Fluxo completo até o alerta');
 const JID = '000000000000000001@g.us';
 const TEL = '5519900000101';
 const limpar = () => {
+  db.prepare("DELETE FROM outbox WHERE doc_id LIKE '55199000001%' OR doc_id LIKE '000000000000000001%'").run();
   const g = db.prepare('SELECT id FROM grupos WHERE wa_jid = ?').get(JID);
   if (g) { db.prepare('DELETE FROM alertas WHERE grupo_id = ?').run(g.id); db.prepare('DELETE FROM grupos WHERE id = ?').run(g.id); }
   for (const t of [TEL, '5519900000102']) {

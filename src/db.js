@@ -276,6 +276,13 @@ CREATE TABLE IF NOT EXISTS conversas (
     ['mensagens', 'privada', 'INTEGER NOT NULL DEFAULT 0'],
     ['mensagens', 'sentimento', 'TEXT'],
     ['mensagens', 'lida', 'INTEGER NOT NULL DEFAULT 1'],
+    // Contato salvo na agenda do celular da campanha — sinal de vínculo real.
+    ['pessoas', 'na_agenda', 'INTEGER NOT NULL DEFAULT 0'],
+    ['pessoas', 'nome_agenda', 'TEXT'],
+    // Propensão a apoiar: calculada mesmo sem abaixo-assinado nenhum.
+    ['perfil', 'propensao', 'REAL NOT NULL DEFAULT 0'],
+    ['perfil', 'faixa_apoio', "TEXT NOT NULL DEFAULT 'Sem sinal'"],
+    ['perfil', 'motivos_apoio', 'TEXT'],
     ['eventos', 'dados', 'TEXT']
   ]) {
     if (!colunas(tabela).includes(coluna)) {

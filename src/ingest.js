@@ -8,15 +8,28 @@ export function telefoneDoJid(jid) {
 }
 
 /** Formata para leitura humana: +55 (19) 99999-8888 */
+/**
+ * Máscara brasileira só para número brasileiro. Aplicá-la em tudo produzia
+ * aberrações como "+17 (01) 92491-532388" para um número dos EUA, e dava a
+ * impressão de que a base estava corrompida quando o dado estava certo.
+ */
 export function formatarTelefone(tel) {
   const d = String(tel || '').replace(/\D/g, '');
-  if (d.length < 12) return tel || '';
-  const pais = d.slice(0, 2);
-  const ddd = d.slice(2, 4);
-  const resto = d.slice(4);
-  const meio = resto.length > 8 ? resto.slice(0, 5) : resto.slice(0, 4);
-  const fim = resto.length > 8 ? resto.slice(5) : resto.slice(4);
-  return `+${pais} (${ddd}) ${meio}-${fim}`;
+  if (!d) return tel || '';
+
+  const brasileiro = d.startsWith('55') && (d.length === 12 || d.length === 13);
+  if (brasileiro) {
+    const ddd = d.slice(2, 4);
+    const resto = d.slice(4);
+    const corte = resto.length > 8 ? 5 : 4;
+    return `+55 (${ddd}) ${resto.slice(0, corte)}-${resto.slice(corte)}`;
+  }
+
+  // Identificador interno do WhatsApp (LID), não um telefone.
+  if (d.length > 14) return `id ${d}`;
+
+  // Estrangeiro: agrupa em blocos legíveis sem inventar DDD.
+  return `+${d.replace(/(\d{1,3})(\d{3})(\d+)/, '$1 $2 $3')}`;
 }
 
 export function upsertPessoa({ jid, nomeWa = null, origem = 'grupo', ts = agora() }) {

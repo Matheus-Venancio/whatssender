@@ -59,6 +59,104 @@ function definirFaixa(score, m) {
   return 'Adormecido';
 }
 
+// ---------------------------------------------------------------------------
+// Propensão a apoiar (0–100).
+//
+// Diferente do engajamento, que mede participação no grupo, isto responde
+// "que chance essa pessoa tem de virar apoiadora de verdade?" — e precisa
+// funcionar para campanha SEM abaixo-assinado nenhum, só com contatos e
+// grupos. Por isso nenhum componente sozinho passa de 30: quem não tem
+// cadastro ainda pode chegar em "provável" pelos outros sinais.
+// ---------------------------------------------------------------------------
+export const PESOS_APOIO = {
+  conversaPrivada: 30,   // trocou mensagem no privado — o sinal mais forte
+  participacao: 22,      // fala nos grupos
+  agenda: 14,            // está salva na agenda do celular da campanha
+  interesse: 12,         // demonstrou tema de interesse
+  cadastro: 12,          // preencheu formulário ou assinou
+  alcance: 10            // está em mais de um grupo
+};
+
+export const FAIXAS_APOIO = ['Provável apoiador', 'Possível apoiador', 'Contato frio', 'Sem sinal', 'Não abordar'];
+
+export const CORES_APOIO = {
+  'Provável apoiador': '#16a34a',
+  'Possível apoiador': '#2563eb',
+  'Contato frio': '#f59e0b',
+  'Sem sinal': '#94a3b8',
+  'Não abordar': '#dc2626'
+};
+
+function calcularPropensao(m) {
+  const motivos = [];
+  let total = 0;
+
+  const somar = (pontos, motivo) => {
+    if (pontos <= 0) return;
+    total += pontos;
+    if (motivo) motivos.push(motivo);
+  };
+
+  // 1. Conversa privada. Quem ELA iniciou vale mais do que quem só respondeu.
+  if (m.privadas_dela > 0) {
+    const base = teto(m.privadas_dela, 8) * PESOS_APOIO.conversaPrivada;
+    somar(base, `trocou ${m.privadas_dela} mensagem(ns) no privado`);
+    if (m.priv_positivas > 0) motivos.push('tom positivo na conversa');
+  } else if (m.privadas_minhas > 0) {
+    // Só nós escrevemos: é contato, mas sem retorno.
+    somar(PESOS_APOIO.conversaPrivada * 0.15, null);
+  }
+
+  // 2. Participação nos grupos.
+  if (m.msgs_total > 0) {
+    somar(teto(m.msgs_total, 12) * PESOS_APOIO.participacao,
+      `${m.msgs_total} mensagem(ns) nos grupos`);
+  }
+
+  // 3. Salva na agenda: alguém já teve motivo para guardar esse número.
+  if (m.na_agenda) somar(PESOS_APOIO.agenda, 'está salva na agenda do celular');
+
+  // 4. Interesse temático identificado.
+  if (m.temTema) somar(PESOS_APOIO.interesse, 'tem tema de interesse identificado');
+
+  // 5. Cadastro — vale, mas a campanha sem abaixo-assinado não fica de fora.
+  if (m.assinaturas > 0) somar(PESOS_APOIO.cadastro, `assinou ${m.assinaturas} abaixo-assinado(s)`);
+  else if (m.cadastro_em) somar(PESOS_APOIO.cadastro * 0.7, 'preencheu o formulário');
+
+  // 6. Alcance: estar em mais de um grupo indica interesse ativo.
+  if (m.grupos_count > 1) somar(teto(m.grupos_count - 1, 2) * PESOS_APOIO.alcance,
+    `está em ${m.grupos_count} grupos`);
+  else if (m.grupos_count === 1) somar(PESOS_APOIO.alcance * 0.35, null);
+
+  // --- penalidades ---------------------------------------------------------
+  if (m.negativas > 0 && m.privadas_dela + m.msgs_total > 0) {
+    const proporcao = m.negativas / Math.max(1, m.privadas_dela + m.msgs_total);
+    if (proporcao > 0.4) {
+      total *= 0.6;
+      motivos.push('tom majoritariamente negativo');
+    }
+  }
+  if (m.grupos_que_saiu > 0 && m.grupos_count === 0) {
+    total *= 0.4;
+    motivos.push('saiu do(s) grupo(s)');
+  }
+
+  const propensao = Math.round(Math.max(0, Math.min(100, total)));
+
+  // Atrito registrado tira a pessoa da lista, não importa o resto: insistir
+  // com quem já reclamou é o caminho mais curto para uma denúncia.
+  if (m.atritos > 0) {
+    return { propensao, faixa: 'Não abordar', motivos: ['registrou atrito com a campanha'] };
+  }
+
+  const faixa = propensao >= 62 ? 'Provável apoiador'
+    : propensao >= 35 ? 'Possível apoiador'
+      : propensao >= 12 ? 'Contato frio'
+        : 'Sem sinal';
+
+  return { propensao, faixa, motivos };
+}
+
 const CAMPOS_PERFIL = [
   { chave: 'nome', peso: 20, rotulo: 'nome completo' },
   { chave: 'cidade', peso: 15, rotulo: 'cidade' },
@@ -139,7 +237,25 @@ function agregados(referencia) {
            (SELECT COUNT(*) FROM membros mb WHERE mb.pessoa_id = p.id AND mb.saiu_em IS NULL) AS grupos_count,
            (SELECT MAX(m.ts) FROM mensagens m WHERE m.pessoa_id = p.id) AS ultima_msg_ts,
            (SELECT COUNT(*) FROM pessoa_tags pt WHERE pt.pessoa_id = p.id) AS tags_count,
-           (SELECT COUNT(*) FROM assinaturas s WHERE s.pessoa_id = p.id) AS assinaturas
+           (SELECT COUNT(*) FROM assinaturas s WHERE s.pessoa_id = p.id) AS assinaturas,
+           p.na_agenda,
+           p.origem,
+           -- Sinais de conversa privada: quem escreve no privado tem vínculo
+           -- muito mais forte do que quem só está no grupo.
+           (SELECT COUNT(*) FROM mensagens m
+             WHERE m.pessoa_id = p.id AND m.privada = 1 AND m.de_mim = 0) AS privadas_dela,
+           (SELECT COUNT(*) FROM mensagens m
+             WHERE m.pessoa_id = p.id AND m.privada = 1 AND m.de_mim = 1) AS privadas_minhas,
+           (SELECT COUNT(*) FROM mensagens m
+             WHERE m.pessoa_id = p.id AND m.privada = 1 AND m.de_mim = 0
+               AND m.sentimento = 'positivo') AS priv_positivas,
+           (SELECT COUNT(*) FROM mensagens m
+             WHERE m.pessoa_id = p.id AND m.sentimento IN ('negativo','critico')) AS negativas,
+           -- Atrito registrado: pesa mais que qualquer sinal positivo.
+           (SELECT COUNT(*) FROM alertas a
+             WHERE a.pessoa_id = p.id AND a.tipo LIKE 'atrito:%') AS atritos,
+           (SELECT COUNT(*) FROM membros mb
+             WHERE mb.pessoa_id = p.id AND mb.saiu_em IS NOT NULL) AS grupos_que_saiu
       FROM pessoas p
   `).all(corte30, corte7);
 
@@ -245,8 +361,9 @@ export function recomputar({ referencia = agora() } = {}) {
       pessoa_id, engajamento, faixa, msgs_total, msgs_30d, msgs_7d,
       reacoes_dadas, reacoes_recebidas, respostas_dadas, respostas_recebidas,
       midias, grupos_count, ultima_msg_ts, ultima_msg_texto, ultima_msg_grupo,
-      dias_sem_falar, tema_principal, intencoes, completude, proxima_acao, atualizado_em
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      dias_sem_falar, tema_principal, intencoes, completude, proxima_acao, atualizado_em,
+      propensao, faixa_apoio, motivos_apoio
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(pessoa_id) DO UPDATE SET
       engajamento = excluded.engajamento, faixa = excluded.faixa,
       msgs_total = excluded.msgs_total, msgs_30d = excluded.msgs_30d, msgs_7d = excluded.msgs_7d,
@@ -257,7 +374,9 @@ export function recomputar({ referencia = agora() } = {}) {
       ultima_msg_grupo = excluded.ultima_msg_grupo, dias_sem_falar = excluded.dias_sem_falar,
       tema_principal = excluded.tema_principal, intencoes = excluded.intencoes,
       completude = excluded.completude, proxima_acao = excluded.proxima_acao,
-      atualizado_em = excluded.atualizado_em
+      atualizado_em = excluded.atualizado_em,
+      propensao = excluded.propensao, faixa_apoio = excluded.faixa_apoio,
+      motivos_apoio = excluded.motivos_apoio
   `);
 
   db.exec('BEGIN');
@@ -295,12 +414,15 @@ export function recomputar({ referencia = agora() } = {}) {
         ? (ultima.texto || ETIQUETA_MIDIA[ultima.tipo] || 'mensagem')
         : null;
 
+      const apoio = calcularPropensao({ ...metricas, temTema: Boolean(temaPrincipal) });
+
       gravarPerfil.run(
         p.id, engajamento, faixa, p.msgs_total, p.msgs_30d, p.msgs_7d,
         p.reacoes_dadas, p.reacoes_recebidas, p.respostas_dadas, p.respostas_recebidas,
         p.midias, p.grupos_count, p.ultima_msg_ts, textoUltima, ultima?.grupo ?? null,
         diasSemFalar, temaPrincipal, JSON.stringify(intencoes), completude, proximaAcao,
-        referencia
+        referencia,
+        apoio.propensao, apoio.faixa, JSON.stringify(apoio.motivos)
       );
     }
     db.exec('COMMIT');

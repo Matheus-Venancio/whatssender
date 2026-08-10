@@ -23,6 +23,7 @@ const ok = (condicao, descricao) => {
 
 const TEL = '5519955550001';
 const limpar = () => {
+  db.prepare("DELETE FROM outbox WHERE doc_id LIKE '5519955%'").run();
   const p = db.prepare('SELECT id FROM pessoas WHERE telefone = ?').get(TEL);
   if (p) db.prepare('DELETE FROM pessoas WHERE id = ?').run(p.id);
 };
