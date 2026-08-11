@@ -194,6 +194,43 @@ curl https://claudiacamargo.onrender.com/api/saude
 
 ---
 
+## Erro: EACCES ao subir
+
+```
+Error: EACCES: permission denied, mkdir '/var/dados/campanhas'
+    at file:///opt/render/project/src/src/db.js:33:1
+==> Exited with status 1
+```
+
+`EACCES` é **permissão negada**, não "não encontrado". Um disco montado chega
+pronto e gravável; se o processo precisa criar o ponto de montagem, é porque
+**não há disco** — e `/var` pertence ao root.
+
+Causa: `DATA_DIR` definido (passo 2) sem o disco adicionado (passo 1). No plano
+Free o Render não permite disco, então essa combinação é o padrão de quem
+seguiu só metade do guia.
+
+**Para o serviço voltar ao ar agora:** Environment → apague `DATA_DIR` → *Save*.
+O sistema volta a gravar em `./data`, dentro do projeto. Sobe e funciona — mas
+os dados somem a cada deploy e a cada hibernação.
+
+**Para resolver de verdade:** adicione o disco (passo 1) e devolva `DATA_DIR`.
+
+## Recursos que exigem instância paga
+
+No menu do serviço, o raio ⚡ marca o que o plano Free não tem:
+
+| | Free | Pago |
+|---|---|---|
+| Disk | ⚡ | sim |
+| Shell | ⚡ | sim |
+| Scaling | ⚡ | sim |
+| One-Off Jobs | ⚡ | sim |
+
+Isso importa porque os passos 5 e 6 deste guia rodam **no Shell**. Sem instância
+paga não há Shell, e portanto não há como enviar a chave do Firebase nem
+restaurar a base pelo servidor.
+
 ## Duas armadilhas
 
 **Não escale para 2 instâncias.** Duas instâncias = duas conexões com a mesma
