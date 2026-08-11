@@ -926,16 +926,33 @@ VISTAS.firebase = async () => {
             <li>Acesse <b>console.firebase.google.com</b> e crie um projeto (ex.: <i>rede-apoio-claudia</i>).</li>
             <li>No menu, abra <b>Firestore Database → Criar banco de dados</b>. Escolha o modo de produção e a região <b>southamerica-east1</b>.</li>
             <li>Vá em <b>⚙ Configurações do projeto → Contas de serviço → Gerar nova chave privada</b>. Baixa um arquivo <code>.json</code>.</li>
-            <li>Salve o arquivo dentro da pasta <b>desta campanha</b>:
-                <code>data/campanhas/${esc(estado.campanha?.slug ?? '&lt;slug&gt;')}/firebase-key.json</code>.</li>
-            <li>Aponte a chave para a campanha com o comando abaixo e reinicie o servidor.</li>
-            <li>Volte aqui e clique em <b>Sincronizar tudo</b>.</li>
+            <li>Abra o arquivo baixado, copie <b>todo</b> o conteúdo e cole no campo abaixo.</li>
+            <li>Confira a pasta no Firestore e clique em <b>Salvar credencial</b>.</li>
           </ol>
-          <div class="codigo">npm run configurar -- --firebase ${esc(estado.campanha?.slug ?? '&lt;slug&gt;')} --caminho data/campanhas/${esc(estado.campanha?.slug ?? '&lt;slug&gt;')}/firebase-key.json</div>
-          <div class="alerta info" style="margin-top:6px">
-            Cada campanha tem a <b>sua</b> chave, registrada no banco de contas — não há
-            leitura de <code>.env</code> aqui. É o que impede a base de um candidato
-            aparecer no Firebase do outro.
+
+          <div class="campo" style="margin-top:12px">
+            <label>Chave da conta de serviço (JSON)</label>
+            <textarea id="fb-chave" rows="5" spellcheck="false"
+              style="font-family:ui-monospace,monospace;font-size:11.5px;resize:vertical"
+              placeholder='{ "type": "service_account", "project_id": "...", ... }'></textarea>
+          </div>
+          <div class="campo">
+            <label>Pasta desta campanha no Firestore</label>
+            <input id="fb-pasta" value="${esc(s.pasta ?? estado.campanha.slug)}">
+            <small style="display:block;margin-top:5px;font-size:11.5px;color:var(--tinta-3);line-height:1.5">
+              Os dados ficam em <code>campanhas/<span id="fb-previa">${esc(s.pasta ?? estado.campanha.slug)}</span>/…</code>.
+              Se a base desta campanha <b>já existe</b> no Firebase com outro nome, escreva
+              esse nome aqui — senão o sistema procura numa pasta vazia e parece que os
+              dados sumiram.
+            </small>
+          </div>
+          <button class="btn primario" style="width:100%;justify-content:center;padding:11px"
+                  data-acao="fb-credencial">Salvar credencial</button>
+
+          <div class="alerta info" style="margin-top:10px">
+            A chave é gravada em <code>data/campanhas/${esc(estado.campanha.slug)}/firebase-key.json</code>,
+            só para esta campanha. É o que impede a base de um candidato aparecer no
+            Firebase do outro.
           </div>
           <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.55;margin:4px 0 0">
             Para publicar as regras de segurança e os índices (já prontos no projeto):
@@ -954,6 +971,13 @@ VISTAS.firebase = async () => {
         </div>
       </section>
     </div>`;
+
+  // O caminho no Firestore muda enquanto se digita: ver o destino antes de
+  // salvar evita descobrir a pasta errada só depois de uma restauração vazia.
+  const campoPasta = $('#fb-pasta');
+  campoPasta?.addEventListener('input', () => {
+    $('#fb-previa').textContent = campoPasta.value.trim() || estado.campanha.slug;
+  });
 };
 
 // ============================================================ FORMULÁRIOS / PAUTAS
@@ -2165,6 +2189,27 @@ document.addEventListener('click', async (e) => {
     const r = await api(tudo ? '/firebase/sincronizar' : '/firebase/enviar', { method: 'POST' });
     if (r.status?.conectado) toast('Firebase', `${r.enviados || 0} documento(s) enviados.`);
     else toast('Firebase', r.status?.erro || 'Credencial não configurada — a fila continua guardada.', 'critico');
+    return render();
+  }
+
+  if (alvo('[data-acao="fb-credencial"]')) {
+    const b = alvo('[data-acao="fb-credencial"]');
+    const chave = $('#fb-chave').value.trim();
+    if (!chave) return toast('Falta a chave', 'Cole o JSON da conta de serviço.', 'critico');
+
+    b.disabled = true; b.textContent = 'salvando…';
+    const r = await api('/firebase/credencial', {
+      method: 'POST',
+      body: { chave, pasta: $('#fb-pasta').value.trim() }
+    });
+    b.disabled = false; b.textContent = 'Salvar credencial';
+
+    if (r.erro) return toast('Credencial recusada', r.erro, 'critico');
+    toast(
+      r.status?.conectado ? 'Firebase conectado' : 'Credencial salva',
+      r.status?.conectado ? `Projeto ${r.projeto}.` : (r.status?.erro || 'Ainda não conectou.'),
+      r.status?.conectado ? 'aviso' : 'critico'
+    );
     return render();
   }
 

@@ -94,7 +94,9 @@ function credenciais(slug, estado) {
 function caminhoDaColecao(slug, colecao) {
   const config = configDaCampanha(slug);
   const prefixo = config?.firebasePrefixo;
-  return prefixo ? `${prefixo}/${slug}/${colecao}` : colecao;
+  // A pasta pode não ser o slug: ver a nota em contas.js sobre árvores que já
+  // existiam antes de a campanha ser recriada no painel.
+  return prefixo ? `${prefixo}/${config.firebasePasta || slug}/${colecao}` : colecao;
 }
 
 /**
@@ -500,9 +502,14 @@ export function sincronizarTudo() {
 export function statusFirebase() {
   atualizarPendentes();
   const estado = conexoes.atual().estado;
+  const config = configDaCampanha(campanhaAtual());
   return {
     ...estado,
     campanha: campanhaAtual(),
+    // A pasta no Firestore precisa aparecer no painel: é o que a equipe
+    // confere antes de restaurar uma base que já existe.
+    pasta: config?.firebasePasta ?? campanhaAtual(),
+    prefixo: config?.firebasePrefixo ?? estado.prefixo ?? null,
     ultimoEnvio: estado.ultimoEnvio || Number(getConfig('firestore_ultimo_envio', 0)) || null,
     erros: db.prepare(
       'SELECT erro, COUNT(*) AS n FROM outbox WHERE enviado_em IS NULL AND erro IS NOT NULL GROUP BY erro LIMIT 3'

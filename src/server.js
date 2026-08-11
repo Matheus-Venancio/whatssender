@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
-import { db, PASTA_PUBLICA, PASTA_DADOS, RAIZ, agora, getConfig, comCampanha, campanhasNoDisco } from './db.js';
+import { db, PASTA_PUBLICA, PASTA_DADOS, RAIZ, agora, getConfig, comCampanha, campanhasNoDisco, pastaDaCampanha } from './db.js';
 import { salvarCadastro, salvarFormularioPautas, registrarEvento } from './ingest.js';
 import { recomputar, PESOS, FAIXAS, CORES_FAIXA, FAIXAS_APOIO, CORES_APOIO } from './scoring.js';
 import { TEMAS, INTENCOES } from './lexicon.js';
@@ -580,6 +580,39 @@ async function api(req, res, url, sessao) {
       if (rota === '/firebase/enviar') {
         const envio = await firebase.processarFila();
         return json(res, { ...envio, status: firebase.statusFirebase() });
+      }
+
+      // Credencial pela interface. Existe porque o Shell do servidor é
+      // recurso de plano pago no Render: sem isto, uma campanha em produção
+      // não tem como receber a chave do Firebase.
+      if (rota === '/firebase/credencial') {
+        const { chave, pasta, prefixo } = await lerCorpo(req);
+
+        let conta;
+        try {
+          conta = typeof chave === 'string' ? JSON.parse(chave) : chave;
+        } catch {
+          return json(res, { erro: 'Isso não é um JSON válido. Cole o arquivo inteiro, das chaves { } externas.' }, 400);
+        }
+        if (conta?.type !== 'service_account' || !conta.project_id || !conta.private_key) {
+          return json(res, {
+            erro: 'Esse JSON não é uma chave de conta de serviço. Ele precisa ter '
+                + '"type": "service_account", project_id e private_key — é o arquivo de '
+                + 'Configurações do projeto → Contas de serviço → Gerar nova chave privada.'
+          }, 400);
+        }
+
+        const destino = join(pastaDaCampanha(campanha.slug), 'firebase-key.json');
+        await writeFile(destino, JSON.stringify(conta, null, 2), { mode: 0o600 });
+
+        contas.atualizarCampanha(campanha.slug, {
+          firebase_key: destino,
+          firebase_pasta: (pasta || '').trim() || campanha.slug,
+          firebase_prefixo: prefixo === undefined ? (campanha.firebase_prefixo ?? 'campanhas') : (prefixo || null)
+        });
+
+        await firebase.iniciarFirebase();
+        return json(res, { ok: true, projeto: conta.project_id, status: firebase.statusFirebase() });
       }
     }
 

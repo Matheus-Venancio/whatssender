@@ -51,7 +51,9 @@ const { getFirestore } = await import('firebase-admin/firestore');
 const conta = JSON.parse(readFileSync(config.firebaseKey, 'utf8'));
 const fs = getFirestore(initializeApp({ credential: cert(conta), projectId: conta.project_id }, `restaura-${SLUG}`));
 
-const raiz = config.firebasePrefixo ? `${config.firebasePrefixo}/${SLUG}/` : '';
+const raiz = config.firebasePrefixo
+  ? `${config.firebasePrefixo}/${config.firebasePasta || SLUG}/`
+  : '';
 const ler = async (colecao) => (await fs.collection(raiz + colecao).get()).docs;
 
 console.log(`\nRestaurando "${config.nome}" do projeto ${conta.project_id}`);

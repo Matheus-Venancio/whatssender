@@ -59,6 +59,12 @@ CREATE TABLE IF NOT EXISTS sessoes (
 CREATE INDEX IF NOT EXISTS idx_sessao_exp ON sessoes(expira_em);
 `);
 
+// A pasta da campanha no Firestore era sempre o slug. Isso quebra quando a
+// árvore no Firebase já existe com outro nome: criar "Dra. Cláudia Camargo"
+// pelo painel gera o slug "claudia-camargo", enquanto a base dela está em
+// campanhas/claudia — e a restauração volta vazia, sem erro nenhum.
+try { admin.exec('ALTER TABLE campanhas ADD COLUMN firebase_pasta TEXT'); } catch { /* já existe */ }
+
 const DIA = 86_400_000;
 const DURACAO_SESSAO = 30 * DIA;
 
@@ -112,7 +118,7 @@ export const listarCampanhas = ({ apenasAtivas = false } = {}) =>
 
 export function atualizarCampanha(slug, campos) {
   const permitidos = ['nome', 'cargo', 'cor', 'ativa', 'firebase_key', 'firebase_prefixo',
-    'alerta_whatsapp', 'url_cadastro'];
+    'firebase_pasta', 'alerta_whatsapp', 'url_cadastro'];
   const sets = [];
   const valores = [];
   for (const campo of permitidos) {
@@ -143,6 +149,9 @@ export function configDaCampanha(slug) {
     ativa: Boolean(c.ativa),
     firebaseKey: chave && existsSync(chave) ? chave : null,
     firebasePrefixo: c.firebase_prefixo || null,
+    // Onde esta campanha mora dentro do projeto compartilhado. Por padrão é o
+    // próprio slug; pode divergir quando a árvore já existia antes.
+    firebasePasta: c.firebase_pasta || c.slug,
     alertaWhatsapp: c.alerta_whatsapp || process.env.ALERTA_WHATSAPP || null,
     urlCadastro: c.url_cadastro || `/cadastro/${c.slug}`,
     pasta: pastaDaCampanha(c.slug)
