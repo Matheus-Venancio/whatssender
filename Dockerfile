@@ -19,8 +19,17 @@ COPY src ./src
 COPY public ./public
 
 ENV NODE_ENV=production
-# Os dados NÃO ficam no container — vão para o disco persistente montado aqui.
-ENV DATA_DIR=/var/dados
+
+# DATA_DIR fica de fora de propósito.
+#
+# Os dados precisam viver num disco persistente, não no container. Mas apontar
+# DATA_DIR aqui dentro amarra a imagem a um disco que pode não existir: quem
+# trocar o runtime para Docker num serviço sem disco recebe
+# "EACCES: permission denied, mkdir '/var/dados/campanhas'" e o boot morre.
+#
+# Quem define DATA_DIR é quem também garante o disco: o render.yaml (que declara
+# os dois juntos) ou o painel do Render. Sem ele, o sistema grava em ./data —
+# efêmero, porém funcional.
 
 EXPOSE 3333
 
