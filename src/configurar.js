@@ -14,7 +14,7 @@ import { PASTA_DADOS, pastaDaCampanha, pastaDeAuth, pastaDeLeads, comCampanha, d
 import * as contas from './contas.js';
 
 const arg = (nome, padrao = null) => {
-  const i = process.argv.indexOf(`--${nome}`);
+  const i = process.argv.indexOf(` --${nome}`);
   return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--')
     ? process.argv[i + 1] : padrao;
 };
