@@ -17,6 +17,7 @@ import * as firebase from './firestore.js';
 import * as adicao from './adicionar-grupo.js';
 import { importarPasta } from './importar-leads.js';
 import * as contas from './contas.js';
+import { restaurarDoFirestore } from './restaurar.js';
 import { tomarTrava, soltarTrava, mensagemDeTravada } from './trava.js';
 
 const PORTA = Number(process.env.PORT || 3333);
@@ -622,6 +623,19 @@ async function api(req, res, url, sessao) {
 
         await firebase.iniciarFirebase();
         return json(res, { ok: true, projeto: conta.project_id, status: firebase.statusFirebase() });
+      }
+
+      // Trazer a base do Firestore para o banco local. Conectar o Firebase só
+      // habilita a ESCRITA; sem este caminho de volta, uma campanha em servidor
+      // novo fica conectada e vazia — que foi exatamente o que aconteceu.
+      if (rota === '/firebase/restaurar') {
+        const { confirmar } = await lerCorpo(req);
+        try {
+          const r = await restaurarDoFirestore(campanha.slug, { confirmar: confirmar === true });
+          return json(res, r, r.erro ? 400 : 200);
+        } catch (erro) {
+          return json(res, { erro: erro.message }, 500);
+        }
       }
     }
 

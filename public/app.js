@@ -884,6 +884,8 @@ VISTAS.firebase = async () => {
           : 'Os dados ficam na fila local até a credencial ser configurada. Nada se perde.'}</p>
       </div>
       <div class="acoes">
+        <button class="btn" data-acao="fb-restaurar" ${s.conectado ? '' : 'disabled'}
+                title="Traz pessoas, grupos e assinaturas do Firestore para este servidor">⬇ Trazer base</button>
         <button class="btn" data-acao="fb-enviar" ${s.pendentes ? '' : 'disabled'}>⬆ Enviar fila (${num(s.pendentes)})</button>
         <button class="btn primario" data-acao="fb-sync">↻ Sincronizar tudo</button>
       </div>
@@ -2189,6 +2191,43 @@ document.addEventListener('click', async (e) => {
     const r = await api(tudo ? '/firebase/sincronizar' : '/firebase/enviar', { method: 'POST' });
     if (r.status?.conectado) toast('Firebase', `${r.enviados || 0} documento(s) enviados.`);
     else toast('Firebase', r.status?.erro || 'Credencial não configurada — a fila continua guardada.', 'critico');
+    return render();
+  }
+
+  if (alvo('[data-acao="fb-restaurar"]')) {
+    const b = alvo('[data-acao="fb-restaurar"]');
+    b.disabled = true; b.textContent = 'lendo…';
+
+    // Sempre em duas etapas: primeiro conta o que existe lá, depois grava.
+    // Restaurar sobre uma base já povoada é uma mesclagem, não um desastre —
+    // mas a equipe precisa ver os números antes de mandar escrever.
+    const previa = await api('/firebase/restaurar', { method: 'POST', body: { confirmar: false } });
+    b.disabled = false; b.textContent = '⬇ Trazer base';
+    if (previa.erro) return toast('Não deu para ler', previa.erro, 'critico');
+
+    const f = previa.noFirestore;
+    const total = f.pessoas + f.grupos + f.abaixos + f.assinaturas;
+    if (!total) {
+      return toast('Firestore vazio',
+        `Nada encontrado em ${previa.caminho}. Confira a pasta desta campanha.`, 'critico');
+    }
+    const ok = confirm(
+      `Trazer do Firestore (${previa.caminho}):\n\n`
+      + `  ${f.pessoas} pessoas\n  ${f.grupos} grupos\n`
+      + `  ${f.abaixos} abaixo-assinados\n  ${f.assinaturas} assinaturas\n\n`
+      + `Neste servidor hoje: ${previa.antes.pessoas} pessoas, ${previa.antes.grupos} grupos.\n\n`
+      + 'Os dados são mesclados; nada é apagado. Continuar?'
+    );
+    if (!ok) return;
+
+    b.disabled = true; b.textContent = 'trazendo…';
+    const r = await api('/firebase/restaurar', { method: 'POST', body: { confirmar: true } });
+    b.disabled = false; b.textContent = '⬇ Trazer base';
+    if (r.erro) return toast('Falhou', r.erro, 'critico');
+
+    toast('Base restaurada',
+      `${r.depois.pessoas} pessoas · ${r.depois.grupos} grupos · ${r.depois.assinaturas} assinaturas.`);
+    estado.panorama = null;
     return render();
   }
 
