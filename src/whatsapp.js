@@ -35,6 +35,9 @@ const sessoes = porCampanha(() => ({
     status: 'desconectado',   // desconectado | conectando | qr | conectado | erro
     qr: null,
     qrTexto: null,
+    qrEm: null,               // quando este QR nasceu — o WhatsApp o expira rápido
+    codigo: null,             // código de 8 letras do pareamento por telefone
+    codigoPara: null,
     telefone: null,
     erro: null,
     desde: null,
@@ -615,7 +618,7 @@ export function simularEventoDeGrupo(evento) {
   return processarParticipantes(evento);
 }
 
-export async function conectar() {
+export async function conectar({ parearCom = null } = {}) {
   // O slug é capturado agora: os callbacks do Baileys chegam fora do contexto
   // do AsyncLocalStorage e precisam ser reancorados na campanha certa.
   const slug = campanhaAtual();
@@ -657,8 +660,38 @@ export async function conectar() {
     keepAliveIntervalMs: 25_000,
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: 60_000,
-    retryRequestDelayMs: 1_000
+    retryRequestDelayMs: 1_000,
+
+    // O QR do WhatsApp vale pouco tempo. Com o padrão baixo, quem está longe do
+    // computador — a candidata pegando o celular, destravando, achando o menu —
+    // escaneia um código já vencido e recebe "Verifique sua conexão e tente
+    // novamente", que culpa a internet por um problema de prazo.
+    qrTimeout: 90_000
   });
+
+  // Pareamento por telefone: em vez de escanear, a pessoa digita um código de
+  // 8 letras no próprio WhatsApp. Resolve o caso de quem não consegue apontar a
+  // câmera para a tela — celular longe, tela pequena, ou a candidata em casa
+  // enquanto o painel está aqui.
+  //
+  // Só vale para número ainda não pareado, e precisa de um instante depois do
+  // socket subir para o servidor aceitar o pedido.
+  if (parearCom && !state.creds.registered) {
+    const numero = String(parearCom).replace(/\D/g, '');
+    setTimeout(aqui(async () => {
+      try {
+        const codigo = await sessao().sock.requestPairingCode(numero);
+        sessao().estado.codigo = codigo;
+        sessao().estado.codigoPara = numero;
+        sessao().estado.status = 'qr';
+        console.log(`[whatsapp:${slug}] código de pareamento para ${numero}: ${codigo}`);
+        emitir('status');
+      } catch (erro) {
+        sessao().estado.erro = `Não deu para gerar o código: ${erro.message}`;
+        emitir('status');
+      }
+    }), 3_000);
+  }
 
   // A agenda do celular. Vem em lote no pareamento (`contacts.set`) e depois
   // aos poucos (`contacts.upsert`). Cada contato vira uma pessoa com origem
@@ -718,6 +751,7 @@ export async function conectar() {
       sessao().estado.status = 'qr';
       sessao().estado.qrTexto = qr;
       sessao().estado.qr = gerarQrDataUri ? await gerarQrDataUri(qr) : null;
+      sessao().estado.qrEm = Date.now();
       console.log(`\n[whatsapp:${slug}] QR gerado — abra o painel para escanear.`);
       emitir('status');
     }
@@ -741,6 +775,9 @@ export async function conectar() {
       sessao().estado.status = 'conectado';
       sessao().estado.qr = null;
       sessao().estado.qrTexto = null;
+      sessao().estado.qrEm = null;
+      sessao().estado.codigo = null;
+      sessao().estado.codigoPara = null;
       sessao().estado.desde = agora();
       sessao().estado.telefone = soDigitos(sessao().sock.user?.id);
       setConfig('whatsapp_telefone', sessao().estado.telefone);

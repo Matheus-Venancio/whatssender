@@ -1693,7 +1693,8 @@ VISTAS.conexao = async () => {
         ${s.status === 'conectado'
           ? `<button class="btn" data-acao="wa-sincronizar">↻ Sincronizar grupos</button>
              <button class="btn" data-acao="wa-desconectar">Desconectar</button>`
-          : '<button class="btn primario" data-acao="wa-conectar">Gerar QR Code</button>'}
+          : `<button class="btn" data-acao="wa-parear">📱 Conectar por número</button>
+             <button class="btn primario" data-acao="wa-conectar">Gerar QR Code</button>`}
       </div>
     </div>
 
@@ -1721,13 +1722,32 @@ VISTAS.conexao = async () => {
             <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.55;margin-bottom:0">
               Depois reinicie o servidor e clique em <b>Gerar QR Code</b>.
             </p>
+          ` : s.codigo ? `
+            <div class="qr-caixa">
+              <div style="font-size:12px;color:var(--tinta-3);letter-spacing:.08em">CÓDIGO PARA ${esc(s.codigoPara)}</div>
+              <div style="font-family:ui-monospace,monospace;font-size:38px;font-weight:700;
+                          letter-spacing:.18em;margin:6px 0">${esc(s.codigo)}</div>
+              <p style="font-size:12.5px;color:var(--tinta-3);max-width:340px;margin:0;line-height:1.6">
+                No celular desse número: <b>WhatsApp → Dispositivos conectados → Conectar dispositivo
+                → Conectar com número de telefone</b>. Digite o código acima.
+              </p>
+              <p style="font-size:12px;color:var(--tinta-3);margin:0">
+                Vale poucos minutos. Se vencer, peça outro.
+              </p>
+            </div>
           ` : s.qr ? `
             <div class="qr-caixa">
               <img src="${s.qr}" alt="QR Code do WhatsApp">
-              <p style="font-size:12.5px;color:var(--tinta-3);max-width:340px;margin:0">
-                No celular que já está nos grupos: <b>WhatsApp → Dispositivos conectados → Conectar dispositivo</b>.
-                O QR expira em ~40 segundos e é renovado sozinho.
+              <p style="font-size:12.5px;color:var(--tinta-3);max-width:340px;margin:0;line-height:1.6">
+                No celular que já está nos grupos: <b>WhatsApp → Dispositivos conectados →
+                Conectar dispositivo</b>. Deixe o celular já nessa tela <b>antes</b> de olhar o código:
+                ele expira e é renovado sozinho, e escanear um vencido dá
+                "Verifique sua conexão e tente novamente".
               </p>
+              <div class="alerta info" style="text-align:left;font-size:12.5px">
+                Sem conseguir escanear? Use <b>Conectar por número</b> — a pessoa digita um código
+                de 8 letras no próprio celular, sem câmera nenhuma.
+              </div>
             </div>
           ` : s.status === 'conectado' ? `
             <div class="qr-caixa">
@@ -2297,6 +2317,26 @@ document.addEventListener('click', async (e) => {
       body: { tagId: Number(tag.dataset.tag), remover: tag.dataset.remover === '1' }
     });
     return abrirPessoa(estado.pessoaAberta.id);
+  }
+
+  if (alvo('[data-acao="wa-parear"]')) {
+    const numero = prompt(
+      'Número do WhatsApp que vai ser conectado.\n\n'
+      + 'Só dígitos, com país e DDD — ex.: 5519998887766\n\n'
+      + 'A pessoa vai digitar um código de 8 letras no próprio celular:\n'
+      + 'WhatsApp → Dispositivos conectados → Conectar dispositivo\n'
+      + '→ Conectar com número de telefone.'
+    );
+    if (!numero) return;
+
+    const b = alvo('[data-acao="wa-parear"]');
+    b.disabled = true; b.textContent = 'pedindo código…';
+    const r = await api('/whatsapp/parear', { method: 'POST', body: { numero } });
+    b.disabled = false; b.textContent = '📱 Conectar por número';
+    if (r.erro) return toast('Número inválido', r.erro, 'critico');
+    // O código chega pelo evento de status, alguns segundos depois.
+    toast('Pedindo o código', 'Ele aparece na tela em instantes.');
+    return render();
   }
 
   if (alvo('[data-acao="wa-conectar"]')) {

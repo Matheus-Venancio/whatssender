@@ -659,6 +659,20 @@ async function api(req, res, url, sessao) {
     if (rota.startsWith('/whatsapp/') && metodo === 'POST') {
       if (!pode('conectarWhatsapp')) return negar();
       if (rota === '/whatsapp/conectar') return json(res, await whatsapp.conectar());
+
+      // Pareamento por telefone: a alternativa ao QR. Precisa começar de um
+      // socket novo, então derruba o atual antes de subir pedindo o código.
+      if (rota === '/whatsapp/parear') {
+        const { numero } = await lerCorpo(req);
+        const limpo = String(numero || '').replace(/\D/g, '');
+        if (limpo.length < 12 || limpo.length > 15) {
+          return json(res, {
+            erro: 'Informe o número com país e DDD, só dígitos. Ex.: 5519998887766'
+          }, 400);
+        }
+        await whatsapp.desconectar({ apagarSessao: false });
+        return json(res, await whatsapp.conectar({ parearCom: limpo }));
+      }
       if (rota === '/whatsapp/desconectar') {
         const { apagarSessao } = await lerCorpo(req);
         return json(res, await whatsapp.desconectar({ apagarSessao }));
