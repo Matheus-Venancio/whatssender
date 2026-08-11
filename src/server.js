@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
-import { db, PASTA_PUBLICA, PASTA_DADOS, RAIZ, agora, getConfig, comCampanha, campanhasNoDisco, pastaDaCampanha } from './db.js';
+import { db, PASTA_PUBLICA, PASTA_DADOS, SEM_DISCO, RAIZ, agora, getConfig, comCampanha, campanhasNoDisco, pastaDaCampanha } from './db.js';
 import { salvarCadastro, salvarFormularioPautas, registrarEvento } from './ingest.js';
 import { recomputar, PESOS, FAIXAS, CORES_FAIXA, FAIXAS_APOIO, CORES_APOIO } from './scoring.js';
 import { TEMAS, INTENCOES } from './lexicon.js';
@@ -135,6 +135,8 @@ async function apiPublica(req, res, url) {
       // código rodando é outro. Sem isto, descobrir a diferença exige comparar
       // arquivos servidos com o repositório.
       versao: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? 'local',
+      // true = os dados estão em pasta efêmera e somem no próximo deploy.
+      semDisco: SEM_DISCO || (process.env.NODE_ENV === 'production' && PASTA_DADOS.startsWith(RAIZ)),
       campanhas: contas.listarCampanhas({ apenasAtivas: true }).length,
       whatsapp: whatsapp.sessoesAtivas()
     });

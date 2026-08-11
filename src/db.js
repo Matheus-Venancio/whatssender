@@ -23,43 +23,53 @@ export const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Em produção (Render), os dados vivem num disco persistente montado fora do
 // código — o sistema de arquivos do container é apagado a cada deploy.
 // DATA_DIR aponta para esse disco; sem ele, usa ./data como sempre.
-export const PASTA_DADOS = process.env.DATA_DIR
+const PADRAO = join(RAIZ, 'data');
+const pedida = process.env.DATA_DIR
   ? (isAbsolute(process.env.DATA_DIR) ? process.env.DATA_DIR : join(RAIZ, process.env.DATA_DIR))
-  : join(RAIZ, 'data');
+  : PADRAO;
+
+/**
+ * Abrir a pasta de dados, caindo para ./data se DATA_DIR não for gravável.
+ *
+ * POR QUE NÃO ABORTAR: DATA_DIR apontar para um disco que não existe é um erro
+ * de configuração do provedor, não do sistema. Derrubar o processo transforma
+ * isso em site fora do ar — e, no Render, o serviço fica preso reiniciando sem
+ * ninguém conseguir entrar no painel para corrigir. Servir com dado efêmero e
+ * gritar no log é pior que o disco certo, porém muito melhor que não servir.
+ */
+function escolherPasta() {
+  try {
+    mkdirSync(join(pedida, 'campanhas'), { recursive: true });
+    return pedida;
+  } catch (erro) {
+    if (!['EACCES', 'EPERM', 'EROFS'].includes(erro.code) || pedida === PADRAO) throw erro;
+    console.error(`
+  ⚠  DATA_DIR IGNORADO — sem permissão para gravar em ${pedida}
+     (${erro.code} em ${erro.path})
+
+     Essa pasta não existe e o processo não pode criá-la. No Render isso quer
+     dizer que o disco persistente NÃO está montado: um disco montado já chega
+     criado e gravável.
+
+     O sistema vai subir gravando em ./data para o painel continuar no ar.
+     ATENÇÃO: nesse modo os dados são apagados a cada deploy e a cada
+     hibernação, e a sessão do WhatsApp cai junto.
+
+     Para resolver, escolha uma:
+       1) serviço → Disk → Add Disk, mount path ${pedida}  (instância paga)
+       2) Environment → apague DATA_DIR → Save, rebuild, and deploy
+`);
+    mkdirSync(join(PADRAO, 'campanhas'), { recursive: true });
+    return PADRAO;
+  }
+}
+
+export const PASTA_DADOS = escolherPasta();
+/** Verdadeiro quando os dados estão em pasta efêmera apesar de DATA_DIR pedir disco. */
+export const SEM_DISCO = Boolean(process.env.DATA_DIR) && PASTA_DADOS !== pedida;
 
 export const PASTA_PUBLICA = join(RAIZ, 'public');
 export const PASTA_CAMPANHAS = join(PASTA_DADOS, 'campanhas');
-
-// Se DATA_DIR apontar para um caminho que o processo não pode criar, o erro
-// cru é um `EACCES ... mkdir` sem contexto nenhum. No Render isso significa
-// sempre a mesma coisa: a variável foi definida, mas o disco não foi montado
-// (plano Free não tem disco). Vale explicar em vez de derrubar com stack.
-try {
-  mkdirSync(PASTA_CAMPANHAS, { recursive: true });
-} catch (erro) {
-  if (erro.code !== 'EACCES' && erro.code !== 'EPERM' && erro.code !== 'EROFS') throw erro;
-  console.error(`
-  ❌ Sem permissão para gravar em ${PASTA_DADOS}
-
-     DATA_DIR aponta para "${process.env.DATA_DIR}", mas essa pasta não existe
-     e o processo não pode criá-la (${erro.code} em ${erro.path}).
-
-     No Render, isso quer dizer que o disco persistente NÃO está montado.
-     Um disco montado já chega criado e gravável — se o processo precisa criar
-     a pasta, é porque ela não veio de disco nenhum.
-
-     Duas saídas:
-
-     1) Adicione o disco:  serviço → Disk → Add Disk
-        Mount path: ${PASTA_DADOS}   (exige instância paga)
-
-     2) Enquanto estiver no plano Free, remova a variável DATA_DIR.
-        O sistema volta a gravar em ./data, dentro do projeto. Funciona para
-        apresentar — mas os dados são apagados a cada deploy e a cada
-        hibernação, e a sessão do WhatsApp cai junto.
-`);
-  process.exit(1);
-}
 
 export const contexto = new AsyncLocalStorage();
 const bancos = new Map();
