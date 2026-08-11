@@ -30,7 +30,36 @@ export const PASTA_DADOS = process.env.DATA_DIR
 export const PASTA_PUBLICA = join(RAIZ, 'public');
 export const PASTA_CAMPANHAS = join(PASTA_DADOS, 'campanhas');
 
-mkdirSync(PASTA_CAMPANHAS, { recursive: true });
+// Se DATA_DIR apontar para um caminho que o processo não pode criar, o erro
+// cru é um `EACCES ... mkdir` sem contexto nenhum. No Render isso significa
+// sempre a mesma coisa: a variável foi definida, mas o disco não foi montado
+// (plano Free não tem disco). Vale explicar em vez de derrubar com stack.
+try {
+  mkdirSync(PASTA_CAMPANHAS, { recursive: true });
+} catch (erro) {
+  if (erro.code !== 'EACCES' && erro.code !== 'EPERM' && erro.code !== 'EROFS') throw erro;
+  console.error(`
+  ❌ Sem permissão para gravar em ${PASTA_DADOS}
+
+     DATA_DIR aponta para "${process.env.DATA_DIR}", mas essa pasta não existe
+     e o processo não pode criá-la (${erro.code} em ${erro.path}).
+
+     No Render, isso quer dizer que o disco persistente NÃO está montado.
+     Um disco montado já chega criado e gravável — se o processo precisa criar
+     a pasta, é porque ela não veio de disco nenhum.
+
+     Duas saídas:
+
+     1) Adicione o disco:  serviço → Disk → Add Disk
+        Mount path: ${PASTA_DADOS}   (exige instância paga)
+
+     2) Enquanto estiver no plano Free, remova a variável DATA_DIR.
+        O sistema volta a gravar em ./data, dentro do projeto. Funciona para
+        apresentar — mas os dados são apagados a cada deploy e a cada
+        hibernação, e a sessão do WhatsApp cai junto.
+`);
+  process.exit(1);
+}
 
 export const contexto = new AsyncLocalStorage();
 const bancos = new Map();
