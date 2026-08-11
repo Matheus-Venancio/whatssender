@@ -123,6 +123,11 @@ async function apiPublica(req, res, url) {
     return json(res, {
       ok: true,
       emAr: Math.round(process.uptime()),
+      // Qual commit está REALMENTE no ar. Quando um deploy falha, o Render
+      // mantém a versão anterior servindo — o painel mostra "deploy live" e o
+      // código rodando é outro. Sem isto, descobrir a diferença exige comparar
+      // arquivos servidos com o repositório.
+      versao: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? 'local',
       campanhas: contas.listarCampanhas({ apenasAtivas: true }).length,
       whatsapp: whatsapp.sessoesAtivas()
     });

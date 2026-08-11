@@ -926,11 +926,17 @@ VISTAS.firebase = async () => {
             <li>Acesse <b>console.firebase.google.com</b> e crie um projeto (ex.: <i>rede-apoio-claudia</i>).</li>
             <li>No menu, abra <b>Firestore Database → Criar banco de dados</b>. Escolha o modo de produção e a região <b>southamerica-east1</b>.</li>
             <li>Vá em <b>⚙ Configurações do projeto → Contas de serviço → Gerar nova chave privada</b>. Baixa um arquivo <code>.json</code>.</li>
-            <li>Salve esse arquivo como <code>data/firebase-key.json</code> dentro da pasta do sistema.</li>
-            <li>Copie <code>.env.example</code> para <code>.env</code> (o caminho já vem preenchido) e reinicie o servidor.</li>
+            <li>Salve o arquivo dentro da pasta <b>desta campanha</b>:
+                <code>data/campanhas/${esc(estado.campanha?.slug ?? '&lt;slug&gt;')}/firebase-key.json</code>.</li>
+            <li>Aponte a chave para a campanha com o comando abaixo e reinicie o servidor.</li>
             <li>Volte aqui e clique em <b>Sincronizar tudo</b>.</li>
           </ol>
-          <div class="codigo">cp .env.example .env</div>
+          <div class="codigo">npm run configurar -- --firebase ${esc(estado.campanha?.slug ?? '&lt;slug&gt;')} --caminho data/campanhas/${esc(estado.campanha?.slug ?? '&lt;slug&gt;')}/firebase-key.json</div>
+          <div class="alerta info" style="margin-top:6px">
+            Cada campanha tem a <b>sua</b> chave, registrada no banco de contas — não há
+            leitura de <code>.env</code> aqui. É o que impede a base de um candidato
+            aparecer no Firebase do outro.
+          </div>
           <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.55;margin:4px 0 0">
             Para publicar as regras de segurança e os índices (já prontos no projeto):
           </p>
@@ -941,8 +947,9 @@ VISTAS.firebase = async () => {
             Isso é o mínimo para uma base de dado pessoal com finalidade política.
           </div>
           <div class="alerta">
-            <b>Nunca versione</b> <code>data/firebase-key.json</code> nem os CSV de leads —
-            o <code>.gitignore</code> já cobre os dois.
+            <b>Nunca versione</b> a chave nem os CSV de leads — o <code>.gitignore</code>
+            já cobre <code>data/campanhas/*/firebase-key.json</code> e
+            <code>data/campanhas/*/leads/*.csv</code>.
           </div>
         </div>
       </section>
@@ -1532,6 +1539,15 @@ async function formularioNovaCampanha() {
           <input id="nc-nome" placeholder="Ex.: Fernando Souza"></div>
         <div class="campo"><label>Cargo</label>
           <input id="nc-cargo" placeholder="Ex.: Vereador · Campinas"></div>
+        <div class="campo"><label>Identificador (slug)</label>
+          <input id="nc-slug" placeholder="preenchido a partir do nome">
+          <small style="display:block;margin-top:5px;font-size:11.5px;color:var(--tinta-3);line-height:1.5">
+            Nomeia a pasta dos dados e a árvore no Firestore
+            (<code>campanhas/&lt;slug&gt;</code>). Se esta campanha já tem base no
+            Firebase, use <b>exatamente</b> o mesmo identificador — senão a
+            restauração procura no lugar errado e volta vazia.
+          </small>
+        </div>
         <div class="campo"><label>Cor da campanha</label>
           <input id="nc-cor" type="color" value="#2563eb" style="height:40px;padding:4px"></div>
         <div class="campo"><label>E-mail da equipe</label>
@@ -1548,8 +1564,24 @@ async function formularioNovaCampanha() {
     </div>`;
   gaveta.classList.add('aberto');
   overlay.classList.add('aberto');
+
+  // O slug acompanha o nome enquanto ninguém o editar à mão. Quem digitar um
+  // identificador próprio (para casar com uma árvore que já existe no
+  // Firestore) não pode vê-lo ser sobrescrito ao corrigir o nome.
+  const campoSlug = $('#nc-slug', gaveta);
+  $('#nc-nome', gaveta).addEventListener('input', (e) => {
+    if (campoSlug.dataset.editado) return;
+    campoSlug.value = slugificar(e.target.value);
+  });
+  campoSlug.addEventListener('input', () => { campoSlug.dataset.editado = '1'; });
+
   $('#nc-nome', gaveta)?.focus();
 }
+
+/** Mesma regra do servidor (contas.js), para o painel mostrar o slug antes de criar. */
+const slugificar = (texto) => String(texto || '')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
 async function formularioNovoUsuario() {
   const campanhas = estado.campanhas;
@@ -1993,6 +2025,7 @@ document.addEventListener('click', async (e) => {
       method: 'POST',
       body: {
         nome, cargo: $('#nc-cargo').value.trim() || null, cor: $('#nc-cor').value,
+        slug: $('#nc-slug').value.trim() || null,
         emailEquipe: $('#nc-equipe').value.trim() || null,
         emailCandidato: $('#nc-candidato').value.trim() || null
       }
@@ -2308,7 +2341,11 @@ function pintarFirebase(s) {
     texto.textContent = 'firebase com erro';
   } else {
     ponto.className = 'ponto';
-    texto.textContent = `firebase · ${s.pendentes} na fila`;
+    // Sem campanha ativa a rota nem responde `pendentes` — mostrar "undefined
+    // na fila" faz parecer defeito onde só falta escolher a campanha.
+    texto.textContent = s.pendentes == null
+      ? 'firebase não configurado'
+      : `firebase · ${s.pendentes} na fila`;
   }
 }
 
