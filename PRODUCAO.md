@@ -103,7 +103,13 @@ curl https://claudiacamargo.onrender.com/api/saude
 
 ## 4. Crie as campanhas em produção
 
-Pelo painel: entre com o admin → **🔑 Acessos** → **+ Campanha**.
+Entre com o e-mail e a senha de `ADMIN_EMAIL`/`ADMIN_SENHA`. Como o servidor é
+novo e ainda não tem campanha nenhuma, o painel abre direto na tela de primeiro
+uso, com o botão **+ Criar a primeira campanha**. O menu fica apagado até existir
+uma campanha — não é falta de permissão, é que não há base para essas telas
+lerem.
+
+Depois da primeira, as próximas saem por **🔑 Acessos** → **+ Campanha**.
 Anote as senhas dos dois acessos (equipe e candidato) — elas aparecem uma vez só.
 
 Ou pelo **Shell** do Render:

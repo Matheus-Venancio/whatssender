@@ -1999,7 +1999,12 @@ document.addEventListener('click', async (e) => {
     });
     if (r.erro) { toast('Não deu', r.erro, 'critico'); b.disabled = false; b.textContent = 'Criar campanha'; return; }
 
-    estado.campanhas = (await api('/eu')).campanhas;
+    const eu = await api('/eu');
+    estado.campanhas = eu.campanhas;
+    // Primeira campanha do servidor: ela vira a ativa na hora, senão o painel
+    // continuaria mostrando a tela de "nenhuma campanha" recém-resolvida.
+    if (!estado.campanha) estado.campanha = eu.campanhaAtiva || estado.campanhas[0] || null;
+
     if (r.acessos?.length) mostrarCredencial(`Campanha "${r.nome}" criada`, r.acessos);
     else { fecharGaveta(); toast('Campanha criada', r.nome); }
     pintarIdentidade();
@@ -2218,7 +2223,55 @@ function irPara(vista) {
   render();
 }
 
+/**
+ * Nenhuma campanha no sistema (ou nenhuma vinculada ao acesso).
+ *
+ * São duas situações muito diferentes e a tela precisa distinguir: para o
+ * administrador, isto é o primeiro uso de um servidor novo e ele mesmo resolve
+ * em um clique; para equipe e candidato, é de fato falta de vínculo.
+ */
+function telaSemCampanha() {
+  const podeCriar = podeFazer('gerirCampanhas');
+
+  conteudo.innerHTML = podeCriar ? `
+    <div class="cabecalho">
+      <div>
+        <h2>Nenhuma campanha ainda</h2>
+        <p>Seu acesso é de administrador — você enxerga todas as campanhas do
+           sistema. Só não existe nenhuma criada neste servidor.</p>
+      </div>
+      <div class="acoes">
+        <button class="btn primario" data-acao="nova-campanha">+ Criar a primeira campanha</button>
+      </div>
+    </div>
+
+    <div class="alerta info">
+      <b>Por que o servidor nasce vazio?</b> A pasta <code>data/</code> guarda os dados
+      pessoais das pessoas cadastradas e a chave do Firebase — ela nunca vai pelo git.
+      Cada servidor cria a própria base. Depois de criar a campanha e apontar o
+      Firebase, dá para trazer a base de volta com
+      <code>npm run restaurar -- --campanha &lt;slug&gt; --confirmar</code>.
+    </div>
+
+    <section class="card">
+      <div class="corpo">
+        <div class="titulo">Ordem das coisas</div>
+        <ol style="margin:10px 0 0 18px;line-height:1.9;color:var(--tinta-2)">
+          <li>Criar a campanha (gera os acessos de equipe e candidato)</li>
+          <li>Apontar a chave do Firebase em <b>🔥 Firebase</b></li>
+          <li>Restaurar a base do Firestore, se já existir</li>
+          <li>Ler o QR em <b>🔌 WhatsApp</b></li>
+        </ol>
+      </div>
+    </section>` : `
+    <div class="alerta"><b>Nenhuma campanha vinculada ao seu acesso.</b>
+      Peça ao administrador para te vincular a uma campanha.</div>`;
+}
+
 async function render() {
+  // Sem campanha ativa, toda rota da API responde 400: não adianta tentar.
+  // A tela de Acessos é a exceção — é lá que a campanha é criada.
+  if (!estado.campanha && estado.vista !== 'contas') return telaSemCampanha();
   try {
     await VISTAS[estado.vista]();
   } catch (erro) {
@@ -2326,6 +2379,8 @@ fluxo.onmessage = (e) => {
 };
 
 setInterval(() => {
+  // Sem campanha ativa esta rota responde 400 — não vale poluir o console.
+  if (!estado.campanha) return;
   api('/firebase/status').then(pintarFirebase).catch(() => {});
 }, 20000);
 
@@ -2343,6 +2398,21 @@ function pintarIdentidade() {
     $('#selo-campanha').textContent = iniciais(campanha.nome).slice(0, 2);
     $('#selo-campanha').style.background = campanha.cor || 'var(--roxo)';
     document.title = `${campanha.nome} · Rede de Apoio`;
+  } else {
+    $('#nome-campanha').textContent = 'Rede de Apoio';
+    $('#cargo-campanha').textContent = 'nenhuma campanha criada';
+    $('#selo-campanha').textContent = 'R';
+    $('#selo-campanha').style.background = 'var(--roxo)';
+    document.title = 'Rede de Apoio';
+  }
+
+  // Sem campanha, o único caminho útil é Acessos — o resto responderia 400.
+  for (const item of document.querySelectorAll('.nav-item[data-vista]')) {
+    item.classList.toggle('inerte', !campanha && item.dataset.vista !== 'contas');
+  }
+  if (!campanha) {
+    $('#texto-status').textContent = 'sem campanha';
+    $('#texto-firebase').textContent = 'sem campanha';
   }
 
   // O seletor só aparece para quem enxerga mais de uma campanha.
@@ -2398,12 +2468,9 @@ async function recarregarTudo() {
   estado.campanha = eu.campanhaAtiva || estado.campanhas[0] || null;
   estado.permissoes = eu.permissoes || {};
 
-  if (!estado.campanha) {
-    pintarIdentidade();
-    conteudo.innerHTML = `<div class="alerta"><b>Nenhuma campanha vinculada ao seu acesso.</b>
-      Peça ao administrador para te vincular a uma campanha.</div>`;
-    return;
-  }
+  // Servidor novo: o administrador nasce de ADMIN_EMAIL, mas não existe
+  // campanha nenhuma ainda. Ele pode tudo — só não tem o que ver.
+  if (!estado.campanha) { pintarIdentidade(); return telaSemCampanha(); }
 
   await recarregarTudo();
 })();

@@ -62,6 +62,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
   color: #94a3b8; font-size: 13.5px; font-weight: 500;
 }
 .nav-item:hover { background: #1c2130; color: #e2e8f0; }
+/* Sem campanha criada não há o que essas telas mostrem — ficam à vista,
+   mas apagadas, para não parecer que o menu sumiu. */
+.nav-item.inerte { opacity: .32; pointer-events: none; }
 .nav-item.ativo { background: var(--roxo); color: #fff; }
 .nav-item .conta {
   margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums;
