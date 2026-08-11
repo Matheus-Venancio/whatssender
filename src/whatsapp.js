@@ -7,7 +7,7 @@
 // Instale quando for plugar de verdade:
 //     npm install @whiskeysockets/baileys qrcode
 //
-//nquanto não instalar, o sistema roda em modo demonstração normalmente.
+//nquanto nã  o instalar, o sistema roda em modo demonstração normalmente.
 
 import { join } from 'node:path';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
