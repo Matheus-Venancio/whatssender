@@ -105,7 +105,14 @@ async function servirArquivo(res, nome) {
   const caminho = join(PASTA_PUBLICA, normalize(nome).replace(/^(\.\.[/\\])+/, ''));
   try {
     const conteudo = await readFile(caminho);
-    res.writeHead(200, { 'Content-Type': MIME[extname(caminho)] || 'application/octet-stream' });
+    // Sem isto o navegador guarda app.js por heurística e continua rodando a
+    // versão anterior depois de um deploy — o painel some campos novos e
+    // parece defeito do servidor. `no-cache` ainda revalida (304), não recarrega
+    // o arquivo inteiro a cada vez.
+    res.writeHead(200, {
+      'Content-Type': MIME[extname(caminho)] || 'application/octet-stream',
+      'Cache-Control': 'no-cache'
+    });
     res.end(conteudo);
   } catch {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
