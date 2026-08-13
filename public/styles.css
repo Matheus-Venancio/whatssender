@@ -95,7 +95,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .cabecalho { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
 .cabecalho h2 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
 .cabecalho p { margin: 4px 0 0; color: var(--tinta-3); font-size: 13px; }
-.cabecalho .acoes { margin-left: auto; display: flex; gap: 8px; }
+.cabecalho .acoes { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+/* Sem isto o bloco de texto não encolhe (min-width:auto é o padrão do flex) e
+   empurra os botões para fora da tela — some o botão principal da página. */
+.cabecalho > div:first-child { flex: 1 1 300px; min-width: 0; }
 
 /* -------------------------------------------------------------- componentes */
 .card {

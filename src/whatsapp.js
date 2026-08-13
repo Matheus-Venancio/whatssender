@@ -23,6 +23,7 @@ import { analisarMensagem } from './risco.js';
 import { analisarSentimento, atualizarConversa } from './conversa.js';
 import { registrarExecutor, pausar as pausarFila } from './adicionar-grupo.js';
 import { publicarPessoa, publicarGrupo, publicarAlerta, enfileirar, COLECOES } from './firestore.js';
+import * as nuvem from './nuvem.js';
 
 // Cada candidato tem o seu socket, o seu QR e a sua pasta de sessão.
 const sessoes = porCampanha(() => ({
@@ -742,7 +743,20 @@ export async function conectar({ parearCom = null } = {}) {
   sessao().sock.ev.on('contacts.upsert', aqui((contatos) => guardarContatos(contatos)));
   sessao().sock.ev.on('contacts.update', aqui((contatos) => guardarContatos(contatos)));
 
-  sessao().sock.ev.on('creds.update', saveCreds);   // não toca no banco, dispensa contexto
+  // Além de gravar em disco, a credencial sobe para o Firestore. Sem isso,
+  // servidor sem disco volta pedindo QR a cada deploy. O envio é adiado e
+  // colapsado: o Baileys atualiza creds várias vezes por minuto e não vale uma
+  // escrita remota para cada uma.
+  let subindoCreds = null;
+  sessao().sock.ev.on('creds.update', async () => {
+    await saveCreds();
+    if (subindoCreds) return;
+    subindoCreds = setTimeout(() => {
+      subindoCreds = null;
+      nuvem.salvarSessaoWhatsapp(slug).catch(() => { /* acessório */ });
+    }, 10_000);
+    subindoCreds.unref?.();
+  });
 
   sessao().sock.ev.on('connection.update', aqui(async (update) => {
     const { connection, lastDisconnect, qr } = update;

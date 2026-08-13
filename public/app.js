@@ -1505,6 +1505,13 @@ VISTAS.contas = async () => {
               ${c.resumo.naoLidas ? chip(`${c.resumo.naoLidas} não lidas`, '#16a34a') : ''}
               ${c.resumo.alertas ? chip(`${c.resumo.alertas} alertas`, '#dc2626') : ''}
             </div>` : ''}
+            ${admin ? `
+              <div class="linha-dado"><span class="k">Avisos no WhatsApp</span>
+                <span class="v">${c.alerta_whatsapp
+                  ? esc(c.alerta_whatsapp)
+                  : '<span class="vazio">ninguém recebe</span>'}</span></div>
+              <button class="btn" style="width:100%;justify-content:center"
+                      data-avisos="${esc(c.slug)}">🔔 Número que recebe avisos</button>` : ''}
             ${admin && c.slug !== estado.campanha.slug
               ? `<button class="btn" style="width:100%;justify-content:center" data-ir-campanha="${esc(c.slug)}">Trabalhar nesta campanha</button>`
               : '<div class="sub" style="text-align:center;color:var(--tinta-4)">você está aqui</div>'}
@@ -2053,6 +2060,30 @@ document.addEventListener('click', async (e) => {
   if (alvo('[data-acao="nova-campanha"]')) return formularioNovaCampanha();
   if (alvo('[data-acao="novo-usuario"]')) return formularioNovoUsuario();
 
+  const avisos = alvo('[data-avisos]');
+  if (avisos) {
+    const slug = avisos.dataset.avisos;
+    const atual = estado.campanhas.find((c) => c.slug === slug)?.alerta_whatsapp || '';
+    const numero = prompt(
+      'Número que recebe os avisos desta campanha no WhatsApp.\n\n'
+      + 'Só dígitos, com país e DDD — ex.: 5519981466623\n'
+      + 'Deixe em branco para desligar os avisos.\n\n'
+      + 'Chegam: saída de grupo, atrito detectado e mensagem no privado.\n'
+      + 'O aviso sai pelo WhatsApp desta campanha, então ele precisa estar conectado.',
+      atual
+    );
+    if (numero === null) return;
+
+    const limpo = numero.replace(/\D/g, '');
+    if (limpo && (limpo.length < 12 || limpo.length > 15)) {
+      return toast('Número inválido', 'Use país + DDD + número, só dígitos.', 'critico');
+    }
+    await api(`/campanhas/${slug}`, { method: 'PATCH', body: { alerta_whatsapp: limpo || null } });
+    estado.campanhas = (await api('/eu')).campanhas;
+    toast('Avisos atualizados', limpo ? `Vão para ${limpo}.` : 'Desligados.');
+    return render();
+  }
+
   const irCampanha = alvo('[data-ir-campanha]');
   if (irCampanha) {
     const seletor = $('#troca-campanha');
@@ -2405,9 +2436,8 @@ function telaSemCampanha() {
     <div class="alerta info">
       <b>Por que o servidor nasce vazio?</b> A pasta <code>data/</code> guarda os dados
       pessoais das pessoas cadastradas e a chave do Firebase — ela nunca vai pelo git.
-      Cada servidor cria a própria base. Depois de criar a campanha e apontar o
-      Firebase, dá para trazer a base de volta com
-      <code>npm run restaurar -- --campanha &lt;slug&gt; --confirmar</code>.
+      Cada servidor cria a própria base. Depois de criar a campanha e colar a chave do
+      Firebase, o botão <b>⬇ Trazer base</b> traz tudo de volta do Firestore.
     </div>
 
     <section class="card">
@@ -2415,9 +2445,9 @@ function telaSemCampanha() {
         <div class="titulo">Ordem das coisas</div>
         <ol style="margin:10px 0 0 18px;line-height:1.9;color:var(--tinta-2)">
           <li>Criar a campanha (gera os acessos de equipe e candidato)</li>
-          <li>Apontar a chave do Firebase em <b>🔥 Firebase</b></li>
-          <li>Restaurar a base do Firestore, se já existir</li>
-          <li>Ler o QR em <b>🔌 WhatsApp</b></li>
+          <li>Colar a chave do Firebase em <b>🔥 Firebase</b></li>
+          <li>Clicar em <b>⬇ Trazer base</b>, se a campanha já tem dados lá</li>
+          <li>Conectar em <b>🔌 WhatsApp</b> — por QR ou por número</li>
         </ol>
       </div>
     </section>` : `

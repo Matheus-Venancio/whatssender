@@ -18,6 +18,8 @@ import * as adicao from './adicionar-grupo.js';
 import { importarPasta } from './importar-leads.js';
 import * as contas from './contas.js';
 import { restaurarDoFirestore } from './restaurar.js';
+import * as nuvem from './nuvem.js';
+import { ligarAvisos } from './notificar.js';
 import { tomarTrava, soltarTrava, mensagemDeTravada } from './trava.js';
 
 const PORTA = Number(process.env.PORT || 3333);
@@ -89,6 +91,11 @@ const transmitir = (evento) => {
 };
 whatsapp.assinar(transmitir);
 adicao.assinarFila((e) => transmitir({ ...e, tipo: `fila_${e.tipo}` }));
+
+// Alerta e mensagem no privado viram aviso no WhatsApp de quem coordena.
+// Cada campanha manda pelo PRÓPRIO número — ver a nota em notificar.js.
+ligarAvisos(whatsapp.assinar, (slug, jid, texto) =>
+  comCampanha(slug, () => whatsapp.enviarMensagem(jid, texto)));
 
 function abrirSse(res, campanha) {
   res.writeHead(200, {
@@ -287,6 +294,8 @@ async function api(req, res, url, sessao) {
       const corpo = await lerCorpo(req);
       try {
         const nova = contas.criarCampanha(corpo);
+        // Sobe na hora: o próximo deploy pode acontecer em seguida.
+        nuvem.salvarContas().catch(() => {});
         // Toda campanha nasce com os dois acessos que ela precisa.
         const acessos = [];
         for (const [papel, email, nome] of [
@@ -306,7 +315,9 @@ async function api(req, res, url, sessao) {
 
     const casaCampanha = rota.match(/^\/campanhas\/([a-z0-9-]+)$/);
     if (casaCampanha && metodo === 'PATCH') {
-      return json(res, contas.atualizarCampanha(casaCampanha[1], await lerCorpo(req)));
+      const r = contas.atualizarCampanha(casaCampanha[1], await lerCorpo(req));
+      nuvem.salvarContas().catch(() => {});
+      return json(res, r);
     }
 
     if (rota === '/usuarios' && metodo === 'GET') {
@@ -317,7 +328,11 @@ async function api(req, res, url, sessao) {
 
     if (rota === '/usuarios' && metodo === 'POST') {
       const corpo = await lerCorpo(req);
-      try { return json(res, contas.criarUsuario(corpo)); }
+      try {
+        const novo = contas.criarUsuario(corpo);
+        nuvem.salvarContas().catch(() => {});
+        return json(res, novo);
+      }
       catch (erro) { return json(res, { erro: erro.message }, 400); }
     }
 
@@ -622,6 +637,12 @@ async function api(req, res, url, sessao) {
         });
 
         await firebase.iniciarFirebase();
+        // A chave também precisa sobreviver ao deploy — sem ela o servidor novo
+        // volta "não configurado" e o botão de trazer a base fica inútil.
+        await Promise.all([
+          nuvem.salvarChaveFirebase(campanha.slug).catch(() => false),
+          nuvem.salvarContas().catch(() => false)
+        ]);
         return json(res, { ok: true, projeto: conta.project_id, status: firebase.statusFirebase() });
       }
 
@@ -812,8 +833,28 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 servidor.listen(PORTA, async () => {
-  // Em produção o disco pode subir vazio no primeiro deploy.
+  // ANTES de semear o admin: sem disco, a pasta sobe vazia a cada deploy. Se o
+  // Firestore guarda o controle, ele reconstrói campanhas, usuários, chaves e
+  // sessões do WhatsApp — e o servidor volta como estava, sem QR nem recadastro.
+  try {
+    const volta = await nuvem.restaurarTudo();
+    if (volta) {
+      console.log(`  [nuvem] restaurado: ${volta.campanhas} campanha(s), ${volta.usuarios} usuário(s)`
+        + (volta.detalhes.length ? ` · ${volta.detalhes.join(' · ')}` : ''));
+    } else if (process.env.NODE_ENV === 'production') {
+      console.warn('  ⚠  [nuvem] FIREBASE_SERVICE_ACCOUNT_JSON não definido —'
+        + ' campanhas e sessões NÃO sobrevivem ao próximo deploy.');
+    }
+  } catch (erro) {
+    console.error('  [nuvem] falha ao restaurar:', erro.message);
+  }
+
+  // Só cria o administrador se, mesmo depois da restauração, não houver ninguém.
   contas.semearAdministrador();
+
+  // O que existir aqui e ainda não estiver no Firestore sobe agora — inclusive
+  // o admin recém-semeado, para o próximo deploy já o encontrar lá.
+  nuvem.salvarContas().catch((e) => console.error('  [nuvem]', e.message));
 
   const campanhas = contas.listarCampanhas({ apenasAtivas: true });
 
