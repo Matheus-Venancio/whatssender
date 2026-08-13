@@ -71,6 +71,7 @@ function definirFaixa(score, m) {
 export const PESOS_APOIO = {
   conversaPrivada: 26,   // trocou mensagem no privado — o sinal mais forte
   reciprocidade: 18,     // os DOIS lados escrevem: amizade, não transmissão
+  convivencia: 14,       // a troca corre sem atrito — não precisa de entusiasmo
   participacao: 20,      // fala nos grupos
   agenda: 12,            // está salva na agenda do celular da campanha
   interesse: 10,         // demonstrou tema de interesse
@@ -119,7 +120,19 @@ function calcularPropensao(m) {
       `conversa nos dois sentidos (${trocaReal} de cada lado)`);
   }
 
-  // 1c. Tom da conversa privada: o que ela sente sobre a campanha.
+  // 1c. Convivência boa: conversa que corre sem atrito.
+  //
+  // A maioria das trocas amistosas não tem palavra "positiva" nenhuma — é
+  // "bom dia", "consegui sim", "obrigada". Exigir entusiasmo explícito jogava
+  // essa gente para "Contato frio", quando é exatamente ela que topa entrar
+  // num grupo. Ausência de atrito, com troca real, é sinal.
+  // Vale também para quem escreve bastante e nunca foi respondida: o tom é
+  // dela, e a equipe não ter dado retorno não é defeito da pessoa.
+  if ((trocaReal >= 2 || m.privadas_dela >= 3) && !(m.priv_negativas > 0)) {
+    somar(PESOS_APOIO.convivencia, 'conversa tranquila, sem atrito');
+  }
+
+  // 1d. Tom da conversa privada: o que ela sente sobre a campanha.
   const tomPriv = (m.priv_positivas || 0) - (m.priv_negativas || 0);
   if (m.privadas_dela > 0 && tomPriv > 0) {
     total *= 1 + Math.min(0.25, tomPriv * 0.08);

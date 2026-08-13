@@ -646,7 +646,7 @@ export async function conectar({ parearCom = null } = {}) {
 
   // Espelhar o histórico existente é opcional: num número novo da campanha vale
   // muito a pena; num número com anos de conversa, é despejo de dado alheio.
-  const espelharHistorico = process.env.SINCRONIZAR_HISTORICO === 'true';
+  const espelharHistorico = process.env.SINCRONIZAR_HISTORICO !== 'false';
 
   // Contagem de QRs desta tentativa — ver a nota no emissor de QR abaixo.
   const MAX_QRS = Number(process.env.WHATSAPP_MAX_QRS || 3);
@@ -732,20 +732,29 @@ export async function conectar({ parearCom = null } = {}) {
     }
   };
 
-  if (espelharHistorico) {
-    sessao().sock.ev.on('messaging-history.set', aqui(({ messages = [], contacts = [], progress, isLatest }) => {
-      guardarContatos(contacts);
-      const antes = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n;
-      for (const antiga of messages) {
-        try { processarMensagem(antiga); } catch { /* mensagem antiga em formato estranho */ }
-      }
-      const importadas = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n - antes;
-      sessao().estado.historico = { progresso: progress ?? null, concluido: Boolean(isLatest) };
-      console.log(`[whatsapp:${slug}] histórico: +${importadas} mensagens${progress != null ? ` (${progress}%)` : ''}`);
-      emitir('historico', sessao().estado.historico);
-      agendarRecalculo();
-    }));
-  }
+  // O ouvinte de histórico fica SEMPRE ligado.
+  //
+  // Ele estava dentro de `if (espelharHistorico)`, e como a variável de
+  // ambiente não existe em produção, o WhatsApp mandava o histórico e o sistema
+  // descartava — junto com os contatos que vêm no mesmo evento. Resultado: base
+  // com mil pessoas e nenhuma conversa, todo mundo em "Sem sinal", nada para a
+  // classificação analisar.
+  //
+  // SINCRONIZAR_HISTORICO controla QUANTO o WhatsApp envia (`syncFullHistory`),
+  // não se aproveitamos o que chega. Mesmo sem ela, o WhatsApp manda as
+  // conversas recentes de cada chat — e é disso que sai a leitura de tom.
+  sessao().sock.ev.on('messaging-history.set', aqui(({ messages = [], contacts = [], progress, isLatest }) => {
+    guardarContatos(contacts);
+    const antes = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n;
+    for (const antiga of messages) {
+      try { processarMensagem(antiga); } catch { /* mensagem antiga em formato estranho */ }
+    }
+    const importadas = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n - antes;
+    sessao().estado.historico = { progresso: progress ?? null, concluido: Boolean(isLatest) };
+    console.log(`[whatsapp:${slug}] histórico: +${importadas} mensagens${progress != null ? ` (${progress}%)` : ''}`);
+    emitir('historico', sessao().estado.historico);
+    agendarRecalculo();
+  }));
 
   sessao().sock.ev.on('contacts.set', aqui(({ contacts }) => guardarContatos(contacts)));
   sessao().sock.ev.on('contacts.upsert', aqui((contatos) => guardarContatos(contatos)));

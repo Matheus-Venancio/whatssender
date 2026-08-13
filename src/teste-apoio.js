@@ -90,6 +90,20 @@ const resultado = comCampanha(SLUG, () => {
     });
   }
 
+  // Conversa comum, sem entusiasmo nenhum: "bom dia", "consegui sim".
+  // É a maioria das trocas reais e precisa contar como sinal.
+  const tranquila = criar('5519955559004', 'Conversa Tranquila', { naAgenda: true });
+  for (let i = 0; i < 4; i++) {
+    registrarMensagem({
+      waId: `tq-eu-${i}`, grupoId: null, pessoaId: tranquila, privada: true, deMim: true,
+      texto: 'bom dia!', ts: agora() - i * 7200_000
+    });
+    registrarMensagem({
+      waId: `tq-ela-${i}`, grupoId: null, pessoaId: tranquila, privada: true, deMim: false,
+      texto: 'bom dia, tudo bem sim', sentimento: 'neutro', ts: agora() - i * 7200_000 + 60_000
+    });
+  }
+
   // 2. Só contato da agenda, nunca falou.
   const morno = criar('5519990000002', 'Zé Silencioso', { naAgenda: true });
 
@@ -130,6 +144,7 @@ const resultado = comCampanha(SLUG, () => {
     forte: ler(forte), morno: ler(morno), grupo: ler(grupo),
     atrito: ler(atrito), nada: ler(nada),
     soRecebe: ler(soRecebe), trocaBoa: ler(trocaBoa), trocaRuim: ler(trocaRuim),
+    tranquila: ler(tranquila),
     grupoId, outroGrupo,
     semAssinaturas: db.prepare('SELECT COUNT(*) AS n FROM assinaturas').get().n,
     panorama: panorama(),
@@ -171,7 +186,7 @@ ok(resultado.ranking[0].propensao === resultado.forte.propensao,
   'a lista ordenada por propensão traz o mais provável primeiro');
 ok(resultado.panorama.apoio.some((a) => a.faixa === 'Provável apoiador'),
   'o panorama mostra a distribuição por propensão');
-ok(resultado.panorama.na_agenda === 5, `contagem de contatos da agenda: ${resultado.panorama.na_agenda}`);
+ok(resultado.panorama.na_agenda === 6, `contagem de contatos da agenda: ${resultado.panorama.na_agenda}`);
 ok(resultado.panorama.origens.some((o) => o.origem === 'contato'),
   'separa quem veio da agenda de quem veio do grupo');
 
@@ -192,6 +207,12 @@ ok(resultado.trocaBoa.propensao > resultado.trocaRuim.propensao,
   'com o mesmo volume, tom positivo supera tom negativo');
 ok(resultado.soRecebe.faixa_apoio !== 'Provável apoiador',
   '20 mensagens sem nenhuma resposta não viram "provável apoiador"');
+ok(resultado.tranquila.propensao >= 35,
+  `conversa tranquila sem entusiasmo → ${resultado.tranquila.faixa_apoio} (${resultado.tranquila.propensao}/100)`);
+ok(/tranquila, sem atrito/.test(String(resultado.tranquila.motivos_apoio)),
+  'o motivo cita a convivência boa');
+ok(resultado.tranquila.propensao > resultado.trocaRuim.propensao,
+  'tom tranquilo supera quem responde mal');
 ok(/dois sentidos/.test(String(resultado.trocaBoa.motivos_apoio)),
   'a ficha explica que a conversa é recíproca');
 
