@@ -648,13 +648,21 @@ export async function conectar({ parearCom = null } = {}) {
   // muito a pena; num número com anos de conversa, é despejo de dado alheio.
   const espelharHistorico = process.env.SINCRONIZAR_HISTORICO === 'true';
 
+  // Contagem de QRs desta tentativa — ver a nota no emissor de QR abaixo.
+  const MAX_QRS = Number(process.env.WHATSAPP_MAX_QRS || 3);
+  let qrsEmitidos = 0;
+
   sessao().sock = makeWASocket({
     version,
     auth: state,
     syncFullHistory: espelharHistorico,
     shouldSyncHistoryMessage: () => espelharHistorico,
     markOnlineOnConnect: false,              // não rouba as notificações do celular
-    browser: ['Rede de Apoio', 'Chrome', '1.0.0'],
+    // A assinatura precisa ser uma combinação que o WhatsApp reconheça. Com um
+    // trio inventado o pareamento por código costuma ser recusado; `Browsers`
+    // monta uma válida e ainda deixa o nome legível em "Dispositivos
+    // conectados", que é como a equipe identifica esta sessão no celular.
+    browser: baileys.Browsers?.ubuntu?.('Rede de Apoio') ?? ['Ubuntu', 'Chrome', '22.04.4'],
 
     // Ping a cada 25s. Sem isso, provedores e proxies derrubam a conexão
     // ociosa por inatividade e o sistema só percebe quando chega mensagem.
@@ -762,6 +770,23 @@ export async function conectar({ parearCom = null } = {}) {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      // Teto de códigos por tentativa. O Baileys renova o QR sozinho enquanto
+      // ninguém lê; deixar rodar sem fim é o que acumula pedidos de vínculo e
+      // leva a conta ao bloqueio temporário. Três códigos ≈ 4 minutos e meio:
+      // tempo de sobra para quem está com o celular na mão.
+      qrsEmitidos++;
+      if (qrsEmitidos > MAX_QRS) {
+        console.warn(`[whatsapp:${slug}] ${MAX_QRS} códigos sem leitura — encerrando para não bloquear a conta`);
+        sessao().estado.status = 'desconectado';
+        sessao().estado.qr = null;
+        sessao().estado.erro = `Gerei ${MAX_QRS} códigos e nenhum foi lido. `
+          + 'Deixe o celular já na tela "Conectar dispositivo" e clique de novo — '
+          + 'insistir sem parar faz o WhatsApp bloquear novos dispositivos por um tempo.';
+        emitir('status');
+        try { sessao().sock?.end(undefined); } catch { /* já morreu */ }
+        return;
+      }
+
       sessao().estado.status = 'qr';
       sessao().estado.qrTexto = qr;
       sessao().estado.qr = gerarQrDataUri ? await gerarQrDataUri(qr) : null;
@@ -852,6 +877,27 @@ export async function conectar({ parearCom = null } = {}) {
             + 'clique em Gerar QR Code ou Conectar por número para parear de novo.'
           : 'A sessão estava corrompida e foi descartada. Pareie de novo pelo QR ou por número.';
         console.warn(`[whatsapp:${slug}] ${s.estado.erro}`);
+        emitir('status');
+        return;
+      }
+
+      // NUNCA reconectar sozinho enquanto o pareamento não aconteceu.
+      //
+      // Cada socket novo sem credencial é um PEDIDO DE VINCULAR DISPOSITIVO.
+      // O reconectar automático foi feito para queda de internet, onde insistir
+      // é certo; aplicado ao QR não lido, ele pede vínculo a cada 90 segundos
+      // para sempre. O WhatsApp lê isso como abuso e bloqueia a conta:
+      // "Não é possível conectar novos dispositivos no momento."
+      //
+      // Sem pareamento, quem decide tentar de novo é a pessoa, clicando.
+      if (!state.creds?.registered) {
+        s.tentativas = 0;
+        s.estado.status = 'desconectado';
+        s.estado.qr = null;
+        s.estado.codigo = null;
+        s.estado.erro = 'O código expirou sem ser lido. Deixe o celular já em '
+          + '"Dispositivos conectados → Conectar dispositivo" e clique de novo.';
+        console.warn(`[whatsapp:${slug}] pareamento não concluído — parei de tentar (evita bloqueio)`);
         emitir('status');
         return;
       }
