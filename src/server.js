@@ -849,6 +849,16 @@ servidor.listen(PORTA, async () => {
     if (volta) {
       console.log(`  [nuvem] restaurado: ${volta.campanhas} campanha(s), ${volta.usuarios} usuário(s)`
         + (volta.detalhes.length ? ` · ${volta.detalhes.join(' · ')}` : ''));
+      if (volta.enviados?.length) {
+        console.log(`  [nuvem] enviado para a nuvem: ${volta.enviados.join(' · ')}`);
+      }
+      // Sem isto o log parece bom e o servidor não sobrevive ao próximo deploy.
+      const semSessao = contas.listarCampanhas({ apenasAtivas: true })
+        .filter((c) => !volta.detalhes.some((d) => d.startsWith(c.slug) && d.includes('sessão')));
+      if (semSessao.length) {
+        console.warn(`  ⚠  [nuvem] sem sessão guardada: ${semSessao.map((c) => c.slug).join(', ')}`
+          + ' — essas campanhas vão pedir QR. A sessão é guardada assim que o WhatsApp conectar.');
+      }
     } else if (process.env.NODE_ENV === 'production') {
       console.warn('  ⚠  [nuvem] FIREBASE_SERVICE_ACCOUNT_JSON não definido —'
         + ' campanhas e sessões NÃO sobrevivem ao próximo deploy.');
@@ -914,9 +924,12 @@ async function encerrar(sinal) {
     for (const cliente of clientesSse) { try { cliente.res.end(); } catch { /* já fechou */ } }
     await whatsapp.encerrarTudo();
 
-    // Última chance de subir o que ficou na fila do Firestore.
+    // Última chance de subir o que ficou na fila do Firestore — e de guardar a
+    // sessão do WhatsApp. Sem disco, o que não subir aqui morre com o container
+    // e o próximo servidor pede QR de novo.
     for (const c of contas.listarCampanhas({ apenasAtivas: true })) {
       try { await comCampanha(c.slug, () => firebase.processarFila()); } catch { /* sem rede */ }
+      try { await nuvem.salvarSessaoWhatsapp(c.slug); } catch { /* sem rede */ }
     }
     servidor.close();
     console.log('[encerrado] sessões do WhatsApp preservadas no disco.\n');

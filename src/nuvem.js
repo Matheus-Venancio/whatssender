@@ -202,5 +202,34 @@ export async function restaurarTudo() {
     const sessao = await restaurarSessaoWhatsapp(c.slug).catch(() => false);
     if (chave || sessao) detalhes.push(`${c.slug}${chave ? ' +chave' : ''}${sessao ? ' +sessão' : ''}`);
   }
-  return { ...r, detalhes };
+
+  // Mão contrária: o que existe AQUI e não existe lá sobe agora.
+  //
+  // Começa pelas campanhas: uma campanha só no disco (criada antes desta
+  // funcionalidade, ou num servidor com disco) some no próximo deploy, e com
+  // ela a chave e a sessão que dependem do slug.
+  await salvarContas().catch(() => ({ ok: false }));
+  //
+  // Sem isto, chave e sessão configuradas antes desta funcionalidade existir
+  // — ou num servidor com disco — nunca chegariam à nuvem, e o primeiro
+  // servidor sem disco nasceria sem elas. Rodar todo boot também conserta
+  // qualquer envio que tenha falhado por rede.
+  const enviados = [];
+  for (const c of contas.listarCampanhas()) {
+    for (const [tipo, existe, enviar] of [
+      ['chave', temChaveLocal, salvarChaveFirebase],
+      ['sessão', temSessaoLocal, salvarSessaoWhatsapp]
+    ]) {
+      if (!existe(c.slug)) continue;
+      const doc = await fs.doc(`${RAIZ}/controle/${tipo === 'chave' ? 'chaves' : 'sessoes'}/${c.slug}`)
+        .get().catch(() => null);
+      if (doc?.exists) continue;
+      if (await enviar(c.slug).catch(() => false)) enviados.push(`${c.slug} ${tipo}`);
+    }
+  }
+
+  return { ...r, detalhes, enviados };
 }
+
+const temChaveLocal = (slug) => existsSync(join(pastaDaCampanha(slug), 'firebase-key.json'));
+const temSessaoLocal = (slug) => existsSync(arquivoDeCreds(slug));

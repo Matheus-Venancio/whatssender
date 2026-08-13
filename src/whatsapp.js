@@ -822,6 +822,14 @@ export async function conectar({ parearCom = null } = {}) {
       setConfig('whatsapp_telefone', sessao().estado.telefone);
       console.log(`[whatsapp:${slug}] conectado como ${sessao().estado.telefone}`);
       emitir('status');
+
+      // Guardar a credencial AGORA, não só no próximo `creds.update`. Este é o
+      // instante em que existe pareamento válido; esperar por um evento que
+      // talvez não venha antes do deploy é o que deixava a coleção de sessões
+      // vazia e fazia todo servidor novo pedir QR de novo.
+      nuvem.salvarSessaoWhatsapp(slug)
+        .then((ok) => ok && console.log(`[whatsapp:${slug}] sessão guardada — sobrevive ao próximo deploy`))
+        .catch((erro) => console.error(`[whatsapp:${slug}] não consegui guardar a sessão:`, erro.message));
       try {
         await sincronizarGrupos();
       } catch (erro) {
