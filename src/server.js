@@ -691,7 +691,15 @@ async function api(req, res, url, sessao) {
             erro: 'Informe o número com país e DDD, só dígitos. Ex.: 5519998887766'
           }, 400);
         }
-        await whatsapp.desconectar({ apagarSessao: false });
+        // Já conectado? Parear de novo jogaria fora uma sessão que funciona.
+        if (whatsapp.estadoDoWhatsapp().status === 'conectado') {
+          return json(res, { erro: 'Este WhatsApp já está conectado. Desconecte antes de parear outro número.' }, 400);
+        }
+
+        // O código de pareamento só existe para credencial NOVA: com a antiga
+        // no disco o WhatsApp responde "Não foi possível conectar o
+        // dispositivo" quando a pessoa digita o código.
+        await whatsapp.desconectar({ apagarSessao: true });
         return json(res, await whatsapp.conectar({ parearCom: limpo }));
       }
       if (rota === '/whatsapp/desconectar') {

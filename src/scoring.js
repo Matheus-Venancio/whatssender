@@ -69,12 +69,13 @@ function definirFaixa(score, m) {
 // cadastro ainda pode chegar em "provável" pelos outros sinais.
 // ---------------------------------------------------------------------------
 export const PESOS_APOIO = {
-  conversaPrivada: 30,   // trocou mensagem no privado — o sinal mais forte
-  participacao: 22,      // fala nos grupos
-  agenda: 14,            // está salva na agenda do celular da campanha
-  interesse: 12,         // demonstrou tema de interesse
-  cadastro: 12,          // preencheu formulário ou assinou
-  alcance: 10            // está em mais de um grupo
+  conversaPrivada: 26,   // trocou mensagem no privado — o sinal mais forte
+  reciprocidade: 18,     // os DOIS lados escrevem: amizade, não transmissão
+  participacao: 20,      // fala nos grupos
+  agenda: 12,            // está salva na agenda do celular da campanha
+  interesse: 10,         // demonstrou tema de interesse
+  cadastro: 10,          // preencheu formulário ou assinou
+  alcance: 8             // está em mais de um grupo
 };
 
 export const FAIXAS_APOIO = ['Provável apoiador', 'Possível apoiador', 'Contato frio', 'Sem sinal', 'Não abordar'];
@@ -101,10 +102,31 @@ function calcularPropensao(m) {
   if (m.privadas_dela > 0) {
     const base = teto(m.privadas_dela, 8) * PESOS_APOIO.conversaPrivada;
     somar(base, `trocou ${m.privadas_dela} mensagem(ns) no privado`);
-    if (m.priv_positivas > 0) motivos.push('tom positivo na conversa');
   } else if (m.privadas_minhas > 0) {
     // Só nós escrevemos: é contato, mas sem retorno.
     somar(PESOS_APOIO.conversaPrivada * 0.15, null);
+  }
+
+  // 1b. Reciprocidade — o que distingue amizade de lista de transmissão.
+  //
+  // Número na agenda com 40 mensagens só da campanha não é apoiador em
+  // potencial: é alguém sendo importunado. Já uma troca em que os DOIS lados
+  // escrevem é relação de verdade, e é dela que sai quem topa entrar num grupo.
+  // Por isso o peso vai no MENOR dos dois lados, não na soma.
+  const trocaReal = Math.min(m.privadas_dela || 0, m.privadas_minhas || 0);
+  if (trocaReal > 0) {
+    somar(teto(trocaReal, 6) * PESOS_APOIO.reciprocidade,
+      `conversa nos dois sentidos (${trocaReal} de cada lado)`);
+  }
+
+  // 1c. Tom da conversa privada: o que ela sente sobre a campanha.
+  const tomPriv = (m.priv_positivas || 0) - (m.priv_negativas || 0);
+  if (m.privadas_dela > 0 && tomPriv > 0) {
+    total *= 1 + Math.min(0.25, tomPriv * 0.08);
+    motivos.push(`tom positivo na conversa (${m.priv_positivas} mensagem(ns))`);
+  } else if (m.privadas_dela > 0 && tomPriv < 0) {
+    total *= Math.max(0.5, 1 + tomPriv * 0.12);
+    motivos.push(`tom negativo na conversa (${m.priv_negativas} mensagem(ns))`);
   }
 
   // 2. Participação nos grupos.
@@ -141,7 +163,11 @@ function calcularPropensao(m) {
     motivos.push('saiu do(s) grupo(s)');
   }
 
-  const propensao = Math.round(Math.max(0, Math.min(100, total)));
+  // Number.isFinite blinda contra peso ausente: um NaN aqui vira NULL no
+  // banco e derruba o recálculo inteiro com "NOT NULL constraint failed".
+  const propensao = Number.isFinite(total)
+    ? Math.round(Math.max(0, Math.min(100, total)))
+    : 0;
 
   // Atrito registrado tira a pessoa da lista, não importa o resto: insistir
   // com quem já reclamou é o caminho mais curto para uma denúncia.
@@ -249,6 +275,11 @@ function agregados(referencia) {
            (SELECT COUNT(*) FROM mensagens m
              WHERE m.pessoa_id = p.id AND m.privada = 1 AND m.de_mim = 0
                AND m.sentimento = 'positivo') AS priv_positivas,
+           -- O tom no privado vale mais que o tom no grupo: no grupo a pessoa
+           -- fala para a plateia; no privado, com a campanha.
+           (SELECT COUNT(*) FROM mensagens m
+             WHERE m.pessoa_id = p.id AND m.privada = 1 AND m.de_mim = 0
+               AND m.sentimento IN ('negativo','critico')) AS priv_negativas,
            (SELECT COUNT(*) FROM mensagens m
              WHERE m.pessoa_id = p.id AND m.sentimento IN ('negativo','critico')) AS negativas,
            -- Atrito registrado: pesa mais que qualquer sinal positivo.

@@ -57,6 +57,39 @@ const resultado = comCampanha(SLUG, () => {
     });
   }
 
+  // 1b. Três formas de "conversar", para separar amizade de transmissão.
+  const soRecebe = criar('5519955559001', 'Só Recebe', { naAgenda: true });
+  for (let i = 0; i < 20; i++) {
+    registrarMensagem({
+      waId: `tx-${i}`, grupoId: null, pessoaId: soRecebe, privada: true, deMim: true,
+      texto: 'oi, tudo bem?', ts: agora() - i * 3600_000
+    });
+  }
+
+  const trocaBoa = criar('5519955559002', 'Conversa Junto', { naAgenda: true });
+  for (let i = 0; i < 6; i++) {
+    registrarMensagem({
+      waId: `tb-eu-${i}`, grupoId: null, pessoaId: trocaBoa, privada: true, deMim: true,
+      texto: 'oi!', ts: agora() - i * 7200_000
+    });
+    registrarMensagem({
+      waId: `tb-ela-${i}`, grupoId: null, pessoaId: trocaBoa, privada: true, deMim: false,
+      texto: 'adorei a proposta, obrigada!', sentimento: 'positivo', ts: agora() - i * 7200_000 + 60_000
+    });
+  }
+
+  const trocaRuim = criar('5519955559003', 'Responde Mal', { naAgenda: true });
+  for (let i = 0; i < 6; i++) {
+    registrarMensagem({
+      waId: `tr-eu-${i}`, grupoId: null, pessoaId: trocaRuim, privada: true, deMim: true,
+      texto: 'oi!', ts: agora() - i * 7200_000
+    });
+    registrarMensagem({
+      waId: `tr-ela-${i}`, grupoId: null, pessoaId: trocaRuim, privada: true, deMim: false,
+      texto: 'não me manda mais isso', sentimento: 'negativo', ts: agora() - i * 7200_000 + 60_000
+    });
+  }
+
   // 2. Só contato da agenda, nunca falou.
   const morno = criar('5519990000002', 'Zé Silencioso', { naAgenda: true });
 
@@ -96,6 +129,7 @@ const resultado = comCampanha(SLUG, () => {
   return {
     forte: ler(forte), morno: ler(morno), grupo: ler(grupo),
     atrito: ler(atrito), nada: ler(nada),
+    soRecebe: ler(soRecebe), trocaBoa: ler(trocaBoa), trocaRuim: ler(trocaRuim),
     grupoId, outroGrupo,
     semAssinaturas: db.prepare('SELECT COUNT(*) AS n FROM assinaturas').get().n,
     panorama: panorama(),
@@ -137,7 +171,7 @@ ok(resultado.ranking[0].propensao === resultado.forte.propensao,
   'a lista ordenada por propensão traz o mais provável primeiro');
 ok(resultado.panorama.apoio.some((a) => a.faixa === 'Provável apoiador'),
   'o panorama mostra a distribuição por propensão');
-ok(resultado.panorama.na_agenda === 2, `contagem de contatos da agenda: ${resultado.panorama.na_agenda}`);
+ok(resultado.panorama.na_agenda === 5, `contagem de contatos da agenda: ${resultado.panorama.na_agenda}`);
 ok(resultado.panorama.origens.some((o) => o.origem === 'contato'),
   'separa quem veio da agenda de quem veio do grupo');
 
@@ -148,6 +182,18 @@ ok(!resultado.fila.some((p) => p.faixa_apoio === 'Não abordar'),
   'quem tem atrito nunca entra na fila de adição');
 ok(resultado.filaProvavel.every((p) => p.faixa_apoio === 'Provável apoiador'),
   `filtro por faixa funciona (${resultado.filaProvavel.length} provável(is))`);
+
+console.log('\n6) Amizade x lista de transmissão');
+console.log(`     só recebe ${resultado.soRecebe.propensao} · troca positiva `
+  + `${resultado.trocaBoa.propensao} · responde mal ${resultado.trocaRuim.propensao}`);
+ok(resultado.trocaBoa.propensao > resultado.soRecebe.propensao,
+  'quem conversa nos dois sentidos supera quem só recebe da campanha');
+ok(resultado.trocaBoa.propensao > resultado.trocaRuim.propensao,
+  'com o mesmo volume, tom positivo supera tom negativo');
+ok(resultado.soRecebe.faixa_apoio !== 'Provável apoiador',
+  '20 mensagens sem nenhuma resposta não viram "provável apoiador"');
+ok(/dois sentidos/.test(String(resultado.trocaBoa.motivos_apoio)),
+  'a ficha explica que a conversa é recíproca');
 
 // No Windows o SQLite ainda segura os arquivos quando o processo termina.
 // A pasta é descartável e é recriada no início do próximo teste.

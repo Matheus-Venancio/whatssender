@@ -802,6 +802,20 @@ export async function conectar({ parearCom = null } = {}) {
       } catch (erro) {
         console.error(`[whatsapp:${slug}] erro ao sincronizar grupos:`, erro.message);
       }
+
+      // Classificar quem tem chance de apoiar, assim que a agenda e o histórico
+      // chegam. Fica adiado porque o Baileys entrega os contatos e as conversas
+      // em lotes por vários segundos depois do "open" — recalcular antes disso
+      // classificaria uma base pela metade.
+      setTimeout(aqui(() => {
+        try {
+          const r = recomputar();
+          console.log(`[whatsapp:${slug}] ${r.pessoas ?? 0} contato(s) classificados por potencial de apoio`);
+          emitir('recalculado');
+        } catch (erro) {
+          console.error(`[whatsapp:${slug}] falha ao classificar:`, erro.message);
+        }
+      }), 45_000).unref?.();
     }
 
     if (connection === 'close') {
@@ -816,11 +830,27 @@ export async function conectar({ parearCom = null } = {}) {
         || codigo === DisconnectReason.badSession;
 
       if (precisaNovoQr) {
+        // A credencial morreu. Se ela ficar no disco, o próximo "Gerar QR Code"
+        // tenta RETOMAR a sessão encerrada: o WhatsApp recusa na hora e nenhum
+        // QR chega a ser emitido — o painel avisa para escanear um código que
+        // nunca aparece. Limpar aqui é o que devolve a saída.
+        try {
+          const pasta = pastaDeAuth(slug);
+          if (existsSync(pasta)) rmSync(pasta, { recursive: true, force: true });
+          nuvem.esquecerSessaoWhatsapp(slug).catch(() => { /* acessório */ });
+        } catch (erro) {
+          console.error(`[whatsapp:${slug}] não consegui limpar a sessão morta:`, erro.message);
+        }
+
         s.tentativas = 0;
         s.estado.status = 'desconectado';
+        s.estado.qr = null;
+        s.estado.codigo = null;
+        s.estado.telefone = null;
         s.estado.erro = codigo === DisconnectReason.loggedOut
-          ? 'Sessão encerrada no celular. Escaneie o QR de novo.'
-          : 'Sessão corrompida. Desconecte apagando a sessão e escaneie o QR de novo.';
+          ? 'A sessão foi encerrada no celular. A credencial antiga já foi descartada — '
+            + 'clique em Gerar QR Code ou Conectar por número para parear de novo.'
+          : 'A sessão estava corrompida e foi descartada. Pareie de novo pelo QR ou por número.';
         console.warn(`[whatsapp:${slug}] ${s.estado.erro}`);
         emitir('status');
         return;

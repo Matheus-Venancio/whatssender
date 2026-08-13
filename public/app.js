@@ -445,6 +445,81 @@ function linhaPessoa(x) {
 }
 
 // ============================================================ FILA DE AÇÃO
+// ============================================== POTENCIAL DE APOIO
+//
+// Responde uma pergunta só: dos contatos que existem nesta base, quem tem
+// chance real de entrar num grupo de apoio?
+//
+// A leitura é da conversa, não do cadastro. Quem troca mensagem nos DOIS
+// sentidos e em tom positivo sobe; quem só recebe da campanha, quem responde
+// mal ou quem já gerou atrito não entra. Ver PESOS_APOIO em scoring.js.
+VISTAS.apoio = async () => {
+  const faixa = estado.filtroApoio ?? 'Provável apoiador';
+  const [dados, resumo] = await Promise.all([
+    api(`/pessoas?ordenar=propensao&porPagina=50${faixa ? `&apoio=${encodeURIComponent(faixa)}` : ''}`),
+    api('/panorama')
+  ]);
+
+  const porFaixa = Object.fromEntries((resumo.apoio || []).map((x) => [x.faixa, x.n]));
+  const total = Object.values(porFaixa).reduce((a, b) => a + b, 0);
+  const elConta = $('#conta-apoio');
+  if (elConta) elConta.textContent = num(porFaixa['Provável apoiador'] || 0);
+
+  const faixas = estado.config?.faixas_apoio || [];
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Potencial de apoio</h2>
+        <p>${num(total)} contato(s) analisados pelas conversas. A classificação lê troca real de
+           mensagens e tom — não lista de transmissão.</p>
+      </div>
+      <div class="acoes">
+        <button class="btn" data-acao="reclassificar">↻ Reclassificar agora</button>
+      </div>
+    </div>
+
+    <div class="grade g-kpi" style="margin-bottom:16px">
+      ${faixas.map((f) => `
+        <button class="kpi" data-faixa-apoio="${esc(f)}"
+                style="text-align:left;cursor:pointer;border:1px solid ${f === faixa ? corApoio(f) : 'var(--linha)'}">
+          <div class="rotulo" style="color:${corApoio(f)}">${esc(f)}</div>
+          <div class="valor">${num(porFaixa[f] || 0)}</div>
+        </button>`).join('')}
+    </div>
+
+    <section class="card">
+      <header>
+        <h3>${esc(faixa || 'Todos')}</h3>
+        <span class="dica">${num(dados.total)} pessoa(s) · mais provável primeiro</span>
+      </header>
+      <div class="corpo" style="padding-top:6px">
+        ${dados.itens.length ? dados.itens.map((x) => `
+          <div class="fila-item" data-pessoa="${x.id}">
+            <span class="avatar" style="background:${corDoNome(x.exibicao)}">${esc(iniciais(x.exibicao))}</span>
+            <span style="min-width:0;flex:1">
+              <div class="nome">${esc(x.exibicao)}${x.na_agenda ? ' <span class="dica">· na agenda</span>' : ''}</div>
+              <div class="porque">${esc((x.motivos_apoio || []).join(' · ') || 'sem sinal registrado')}</div>
+            </span>
+            <span style="display:flex;align-items:center;gap:10px;margin-left:auto">
+              <b style="font-variant-numeric:tabular-nums;color:${corApoio(x.faixa_apoio)}">${x.propensao ?? 0}</b>
+              <span class="chip" style="background:${corApoio(x.faixa_apoio)}22;color:${corApoio(x.faixa_apoio)}">${esc(x.faixa_apoio || '—')}</span>
+            </span>
+          </div>`).join('')
+        : `<p class="vazio">Ninguém nesta faixa ainda. ${
+            total ? 'Escolha outra faixa acima.'
+                  : 'Conecte o WhatsApp: a classificação nasce das conversas.'}</p>`}
+      </div>
+    </section>
+
+    <div class="alerta info" style="margin-top:14px">
+      <b>Como o número é formado.</b> Conversa nos dois sentidos pesa mais que volume:
+      quarenta mensagens só da campanha para alguém que nunca respondeu não é apoio,
+      é incômodo. Tom positivo no privado sobe até 25%; tom negativo derruba.
+      Quem gerou atrito vai para <b>Não abordar</b> e nunca entra em fila de adição.
+    </div>`;
+};
+
 VISTAS.fila = async () => {
   const f = estado.fila = await api('/fila');
 
@@ -2059,6 +2134,24 @@ document.addEventListener('click', async (e) => {
   // --- acessos -------------------------------------------------------------
   if (alvo('[data-acao="nova-campanha"]')) return formularioNovaCampanha();
   if (alvo('[data-acao="novo-usuario"]')) return formularioNovoUsuario();
+
+  const faixaApoio = alvo('[data-faixa-apoio]');
+  if (faixaApoio) {
+    // Clicar na faixa já selecionada volta para "todas".
+    const escolhida = faixaApoio.dataset.faixaApoio;
+    estado.filtroApoio = estado.filtroApoio === escolhida ? '' : escolhida;
+    return render();
+  }
+
+  if (alvo('[data-acao="reclassificar"]')) {
+    const b = alvo('[data-acao="reclassificar"]');
+    b.disabled = true; b.textContent = 'lendo conversas…';
+    const r = await api('/recalcular', { method: 'POST' });
+    b.disabled = false; b.textContent = '↻ Reclassificar agora';
+    toast('Classificação refeita', `${num(r.pessoas ?? 0)} contato(s) reavaliados.`);
+    estado.panorama = null;
+    return render();
+  }
 
   const avisos = alvo('[data-avisos]');
   if (avisos) {
