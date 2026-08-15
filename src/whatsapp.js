@@ -22,6 +22,7 @@ import { recomputar } from './scoring.js';
 import { analisarMensagem } from './risco.js';
 import { analisarSentimento, atualizarConversa } from './conversa.js';
 import { registrarExecutor, pausar as pausarFila } from './adicionar-grupo.js';
+import * as transmissao from './transmissao.js';
 import { publicarPessoa, publicarGrupo, publicarAlerta, enfileirar, COLECOES } from './firestore.js';
 import * as nuvem from './nuvem.js';
 
@@ -382,6 +383,21 @@ function processarMensagemPrivada(mensagem, remoto) {
   const primeiraVez = db.prepare(
     'SELECT COUNT(*) AS n FROM mensagens WHERE pessoa_id = ? AND privada = 1'
   ).get(pessoaId).n === 0;
+
+  // "SAIR" e equivalentes tiram a pessoa de qualquer disparo, na hora.
+  //
+  // A lei dá 48 horas para atender o descadastramento (Lei 9.504/97, art.
+  // 57-G). Depender de alguém ler o painel e clicar dentro desse prazo é
+  // apostar contra o expediente — e o custo de errar é multa e denúncia.
+  if (!deMim && conteudo.texto && transmissao.pediuParaSair(conteudo.texto)) {
+    transmissao.descadastrar(pessoaId, 'respondeu pedindo saída');
+    registrarAlerta({
+      tipo: 'optout', gravidade: 'aviso', pessoaId,
+      titulo: 'Pediu para sair da lista',
+      detalhe: `"${conteudo.texto.slice(0, 80)}" — removida de todos os disparos.`
+    });
+    console.log(`[whatsapp:${campanhaAtual()}] descadastrada: ${outroLado}`);
+  }
 
   const sentimento = conteudo.texto && !deMim ? analisarSentimento(conteudo.texto) : null;
 
@@ -806,6 +822,9 @@ export async function conectar({ parearCom = null } = {}) {
 
     if (connection === 'open') {
       // A fila de adição só funciona com o socket vivo.
+      // O disparo privado usa o mesmo socket — e só existe enquanto ele existe.
+      transmissao.registrarExecutor((jid, texto) => sessao().sock.sendMessage(jid, { text: texto }));
+
       registrarExecutor({
         adicionar: async (grupoJid, pessoaJid) => {
           const [r] = await sessao().sock.groupParticipantsUpdate(grupoJid, [pessoaJid], 'add');
@@ -865,6 +884,7 @@ export async function conectar({ parearCom = null } = {}) {
       const s = sessao();
       s.sock = null;
       registrarExecutor(null);
+      transmissao.registrarExecutor(null);
 
       // Só estes dois casos exigem ler o QR de novo. Todo o resto é queda
       // temporária — reconectar sozinho é o comportamento certo.

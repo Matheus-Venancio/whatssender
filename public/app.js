@@ -520,6 +520,143 @@ VISTAS.apoio = async () => {
     </div>`;
 };
 
+// ================================================== TRANSMISSÃO
+//
+// Disparo privado, um a um. A tela existe tanto para operar quanto para deixar
+// visível o que o sistema RECUSA — é a recusa que protege a campanha.
+VISTAS.transmissao = async () => {
+  const d = await api('/transmissao');
+  const faixas = estado.config?.faixas_apoio || [];
+
+  const situacao = (s) => ({
+    rascunho: ['#64748b', 'rascunho'], enviando: ['#16a34a', 'enviando'],
+    pausada: ['#d97706', 'pausada'], concluida: ['#2563eb', 'concluída'],
+    cancelada: ['#dc2626', 'cancelada']
+  })[s] || ['#64748b', s];
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Transmissão</h2>
+        <p>Mensagem privada, uma por pessoa, no ritmo de gente. Não é lista de
+           transmissão do WhatsApp — cada uma chega na conversa individual.</p>
+      </div>
+      <div class="acoes">
+        <button class="btn primario" data-acao="nova-transmissao">+ Nova transmissão</button>
+      </div>
+    </div>
+
+    ${d.impedimento ? `<div class="alerta"><b>Parado agora:</b> ${esc(d.impedimento)}</div>` : ''}
+    ${!d.janela.pode ? `<div class="alerta"><b>Calendário eleitoral:</b> ${esc(d.janela.motivo)}</div>` : ''}
+
+    <div class="grade g-kpi" style="margin-bottom:16px">
+      ${kpi('Ritmo', `${d.limites.intervaloMin}–${d.limites.intervaloMax}s`, 'entre uma mensagem e outra')}
+      ${kpi('Teto diário', num(d.limites.porDia), `${d.limites.porHora}/hora · ${d.limites.horaInicio}h–${d.limites.horaFim}h`)}
+      ${kpi('Propaganda', d.calendario.inicioPropaganda, 'a partir desta data (art. 36)')}
+    </div>
+
+    <section class="card">
+      <header><h3>Envios</h3><span class="dica">${d.itens.length}</span></header>
+      <div class="corpo" style="padding-top:6px">
+        ${d.itens.length ? d.itens.map((t) => {
+          const [cor, rotulo] = situacao(t.situacao);
+          const feito = t.total ? Math.round(((t.total - t.pendentes) / t.total) * 100) : 0;
+          return `
+          <div class="fila-item">
+            <span style="min-width:0;flex:1">
+              <div class="nome">${esc(t.titulo)}
+                <span class="chip" style="background:${cor}22;color:${cor}">${rotulo}</span>
+                ${t.tipo === 'interno' ? '<span class="dica">· mobilização interna</span>' : ''}
+              </div>
+              <div class="porque">${num(t.enviadas)} de ${num(t.total)} enviadas${
+                t.falhas ? ` · ${num(t.falhas)} falha(s)` : ''} · ${feito}%</div>
+            </span>
+            <span style="display:flex;gap:6px;margin-left:auto">
+              ${t.situacao === 'enviando'
+                ? `<button class="btn" data-envio-pausar="${t.id}">Pausar</button>`
+                : (t.pendentes ? `<button class="btn primario" data-envio-iniciar="${t.id}">Enviar</button>` : '')}
+              ${t.pendentes ? `<button class="btn" data-envio-cancelar="${t.id}">Cancelar</button>` : ''}
+            </span>
+          </div>`;
+        }).join('') : '<p class="vazio">Nenhuma transmissão ainda.</p>'}
+      </div>
+    </section>
+
+    <div class="alerta info" style="margin-top:14px">
+      <b>O que o sistema recusa, e por quê.</b><br>
+      · Número sem vínculo nenhum com a campanha — a lei veda cadastro de terceiros
+        (Lei 9.504/97, art. 57-E). Só entra quem está na agenda, já conversou ou se cadastrou.<br>
+      · Quem respondeu <b>SAIR</b> — descadastramento é imediato e definitivo (art. 57-G).<br>
+      · Quem já reclamou da campanha.<br>
+      · Propaganda antes de ${esc(d.calendario.inicioPropaganda)} e no dia da eleição.<br>
+      Toda mensagem sai com <i>"${esc(d.rodape)}"</i> no rodapé.
+      <br><br>
+      Isto ajuda a cumprir a lei — <b>não substitui o advogado eleitoral da campanha</b>.
+      Resoluções do TSE mudam a cada eleição; confirme as datas antes do primeiro disparo.
+    </div>`;
+
+  $('#nav [data-vista="transmissao"]')?.classList.add('ativo');
+};
+
+async function formularioTransmissao() {
+  const faixas = estado.config?.faixas_apoio || [];
+  gaveta.innerHTML = `
+    <div class="topo">
+      <div style="min-width:0">
+        <div style="font-size:16px;font-weight:660;letter-spacing:-.02em">Nova transmissão</div>
+        <div style="font-size:12.5px;color:var(--tinta-3)">mensagem privada, uma por pessoa</div>
+      </div>
+      <button class="fechar" data-acao="fechar-gaveta">✕</button>
+    </div>
+    <div class="rolagem">
+      <div class="bloco">
+        <div class="campo"><label>Nome interno *</label>
+          <input id="tx-titulo" placeholder="Ex.: Convite reunião zona leste"></div>
+
+        <div class="campo"><label>Tipo *</label>
+          <select id="tx-tipo">
+            <option value="propaganda">Propaganda eleitoral — só a partir de 16/08</option>
+            <option value="interno">Mobilização interna — convite, aviso, agenda</option>
+          </select>
+        </div>
+
+        <div class="campo"><label>Mensagem *</label>
+          <textarea id="tx-modelo" rows="5" placeholder="{saudacao}! Vamos ter uma reunião em {cidade}…"></textarea>
+          <small style="display:block;margin-top:5px;font-size:11.5px;color:var(--tinta-3);line-height:1.5">
+            <code>{saudacao}</code> vira "Oi Maria" (e varia, para as mensagens não saírem iguais),
+            <code>{nome}</code> o primeiro nome, <code>{cidade}</code> a cidade.
+            O aviso de descadastramento entra sozinho no fim.
+          </small>
+        </div>
+
+        <div class="campo"><label>Quem recebe</label>
+          <select id="tx-apoio">
+            <option value="">Todos os elegíveis</option>
+            ${faixas.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="campo"><label>Cidade (opcional)</label><input id="tx-cidade"></div>
+        <div class="campo"><label>Limite de pessoas (opcional)</label>
+          <input id="tx-limite" type="number" min="1" placeholder="sem limite"></div>
+      </div>
+
+      <div id="tx-previa" class="alerta info">Clique em <b>Ver prévia</b> para conferir antes de criar.</div>
+
+      <button class="btn" style="width:100%;justify-content:center;padding:11px;margin-bottom:8px"
+              data-acao="tx-previa">👁 Ver prévia</button>
+      <button class="btn primario" style="width:100%;justify-content:center;padding:12px"
+              data-acao="tx-criar">Criar transmissão</button>
+    </div>`;
+  gaveta.classList.add('aberto');
+  overlay.classList.add('aberto');
+  $('#tx-titulo', gaveta)?.focus();
+}
+
+const filtrosTransmissao = () => ({
+  apoio: $('#tx-apoio')?.value || '',
+  cidade: $('#tx-cidade')?.value.trim() || ''
+});
+
 VISTAS.fila = async () => {
   const f = estado.fila = await api('/fila');
 
@@ -2134,6 +2271,79 @@ document.addEventListener('click', async (e) => {
   // --- acessos -------------------------------------------------------------
   if (alvo('[data-acao="nova-campanha"]')) return formularioNovaCampanha();
   if (alvo('[data-acao="novo-usuario"]')) return formularioNovoUsuario();
+
+  if (alvo('[data-acao="nova-transmissao"]')) return formularioTransmissao();
+
+  if (alvo('[data-acao="tx-previa"]')) {
+    const b = alvo('[data-acao="tx-previa"]');
+    b.disabled = true; b.textContent = 'conferindo…';
+    const r = await api('/transmissao/previa', {
+      method: 'POST',
+      body: {
+        filtros: filtrosTransmissao(),
+        limite: Number($('#tx-limite').value) || null,
+        modelo: $('#tx-modelo').value
+      }
+    });
+    b.disabled = false; b.textContent = '👁 Ver prévia';
+
+    const horas = r.total ? Math.round((r.total * 90) / 3600 * 10) / 10 : 0;
+    $('#tx-previa').innerHTML = r.total
+      ? `<b>${num(r.total)} pessoa(s)</b> vão receber. No ritmo seguro, isso leva
+         cerca de <b>${horas}h</b> — o sistema envia sozinho, respeitando o horário.
+         ${r.primeiros?.length ? `<div style="margin-top:8px;font-size:12px;color:var(--tinta-3)">
+           Primeiros: ${r.primeiros.map((p) => esc(p.nome || 'sem nome')).join(', ')}…</div>` : ''}
+         ${r.exemplo ? `<div style="margin-top:10px;padding:10px;background:var(--fundo-2);
+           border-radius:8px;white-space:pre-wrap;font-size:12.5px">${esc(r.exemplo)}</div>` : ''}`
+      : '<b>Ninguém elegível com esses filtros.</b> Lembre: só recebe quem já tem vínculo — '
+        + 'está na agenda, já conversou ou se cadastrou.';
+    return;
+  }
+
+  if (alvo('[data-acao="tx-criar"]')) {
+    const b = alvo('[data-acao="tx-criar"]');
+    const titulo = $('#tx-titulo').value.trim();
+    const modelo = $('#tx-modelo').value.trim();
+    if (!titulo || !modelo) return toast('Faltam dados', 'Nome e mensagem são obrigatórios.', 'critico');
+
+    b.disabled = true; b.textContent = 'criando…';
+    const r = await api('/transmissao', {
+      method: 'POST',
+      body: {
+        titulo, modelo, tipo: $('#tx-tipo').value,
+        filtros: filtrosTransmissao(), limite: Number($('#tx-limite').value) || null
+      }
+    });
+    b.disabled = false; b.textContent = 'Criar transmissão';
+    if (r.erro) return toast('Não deu', r.erro, 'critico');
+
+    fecharGaveta();
+    toast('Transmissão criada', `${num(r.alvos)} pessoa(s) na lista. Clique em Enviar para começar.`);
+    return render();
+  }
+
+  const iniciarEnvio = alvo('[data-envio-iniciar]');
+  if (iniciarEnvio) {
+    const r = await api(`/transmissao/${iniciarEnvio.dataset.envioIniciar}/iniciar`, { method: 'POST' });
+    if (r.erro) return toast('Não pode enviar agora', r.erro, 'critico');
+    toast('Envio começou', 'O sistema manda uma a uma, no ritmo seguro. Pode fechar o painel.');
+    return render();
+  }
+
+  const pausarEnvio = alvo('[data-envio-pausar]');
+  if (pausarEnvio) {
+    await api(`/transmissao/${pausarEnvio.dataset.envioPausar}/pausar`, { method: 'POST' });
+    toast('Pausado', 'Retome quando quiser — a fila continua de onde parou.');
+    return render();
+  }
+
+  const cancelarEnvio = alvo('[data-envio-cancelar]');
+  if (cancelarEnvio) {
+    if (!confirm('Cancelar esta transmissão? Quem ainda não recebeu não vai receber.')) return;
+    const r = await api(`/transmissao/${cancelarEnvio.dataset.envioCancelar}/cancelar`, { method: 'POST' });
+    toast('Cancelada', `${num(r.cancelados || 0)} envio(s) descartados.`);
+    return render();
+  }
 
   const faixaApoio = alvo('[data-faixa-apoio]');
   if (faixaApoio) {

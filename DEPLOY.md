@@ -163,10 +163,23 @@ DATA_DIR=data-teste PORT=3399 npm start
 | `/formulario/<slug>` | pesquisa de pautas de cada campanha |
 | `/api/saude` | health check do Render |
 
-Exemplo com o domínio da Cláudia já existente:
-`claudiacamargo.onrender.com` é o **site** dela. Este sistema é outro serviço —
-sugestão de nome: `rede-apoio.onrender.com`, com os formulários em
-`rede-apoio.onrender.com/cadastro/claudia`.
+O domínio do sistema é **`whatsappsender.com`** — ele atende todas as campanhas,
+cada uma no seu caminho:
+
+| Campanha | Formulário público |
+|---|---|
+| Cláudia | `whatsappsender.com/cadastro/claudia` |
+| Fernandão | `whatsappsender.com/cadastro/fernandao` |
+| Eng. Paulinho | `whatsappsender.com/cadastro/eng-paulinho` |
+
+Não confunda com `claudiacamargo.com`, que é o **site** da candidata — outro
+serviço, outro repositório.
+
+Para apontar o domínio: serviço no Render → **Settings** → *Custom Domains* →
+adicione `whatsappsender.com` e `www.whatsappsender.com`, e crie no seu
+provedor de DNS os registros que o Render mostrar. O painel não tem domínio
+escrito no código: ele monta os links a partir do endereço acessado, então
+passa a exibir o novo assim que o DNS propagar.
 
 ---
 

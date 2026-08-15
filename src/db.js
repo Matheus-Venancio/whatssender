@@ -279,6 +279,31 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_pendente ON outbox(enviado_em, id);
 
+-- Disparo privado em lista. Uma linha por envio planejado, para haver
+-- histórico auditável de quem recebeu o quê e quando — a legislação eleitoral
+-- cobra rastreabilidade da propaganda.
+CREATE TABLE IF NOT EXISTS transmissoes (
+  id          INTEGER PRIMARY KEY,
+  titulo      TEXT NOT NULL,
+  modelo      TEXT NOT NULL,          -- texto com {nome} e {cidade}
+  tipo        TEXT NOT NULL DEFAULT 'propaganda',  -- propaganda|interno
+  criada_em   INTEGER NOT NULL,
+  criada_por  TEXT,
+  situacao    TEXT NOT NULL DEFAULT 'rascunho',  -- rascunho|enviando|pausada|concluida|cancelada
+  enviadas    INTEGER NOT NULL DEFAULT 0,
+  falhas      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS transmissao_alvos (
+  transmissao_id INTEGER NOT NULL REFERENCES transmissoes(id) ON DELETE CASCADE,
+  pessoa_id      INTEGER NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
+  situacao       TEXT NOT NULL DEFAULT 'pendente',  -- pendente|enviado|falhou|pulado
+  motivo         TEXT,
+  enviado_em     INTEGER,
+  PRIMARY KEY (transmissao_id, pessoa_id)
+);
+CREATE INDEX IF NOT EXISTS idx_alvo_situacao ON transmissao_alvos(situacao);
+
 CREATE TABLE IF NOT EXISTS fila_adicao (
   id            INTEGER PRIMARY KEY,
   grupo_id      INTEGER NOT NULL REFERENCES grupos(id) ON DELETE CASCADE,
@@ -322,7 +347,11 @@ CREATE TABLE IF NOT EXISTS conversas (
     ['perfil', 'propensao', 'REAL NOT NULL DEFAULT 0'],
     ['perfil', 'faixa_apoio', "TEXT NOT NULL DEFAULT 'Sem sinal'"],
     ['perfil', 'motivos_apoio', 'TEXT'],
-    ['eventos', 'dados', 'TEXT']
+    ['eventos', 'dados', 'TEXT'],
+    // Pediu para não receber mais. Exigência legal, não preferência: a pessoa
+    // que se descadastra não pode voltar a receber disparo nenhum.
+    ['pessoas', 'opt_out', 'INTEGER NOT NULL DEFAULT 0'],
+    ['pessoas', 'opt_out_em', 'INTEGER']
   ]) {
     if (!colunas(tabela).includes(coluna)) {
       banco.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${tipo}`);

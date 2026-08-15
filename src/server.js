@@ -15,6 +15,7 @@ import { lerConversa, sugerirRespostas } from './conversa.js';
 import * as whatsapp from './whatsapp.js';
 import * as firebase from './firestore.js';
 import * as adicao from './adicionar-grupo.js';
+import * as transmissao from './transmissao.js';
 import { importarPasta } from './importar-leads.js';
 import * as contas from './contas.js';
 import { restaurarDoFirestore } from './restaurar.js';
@@ -91,6 +92,7 @@ const transmitir = (evento) => {
 };
 whatsapp.assinar(transmitir);
 adicao.assinarFila((e) => transmitir({ ...e, tipo: `fila_${e.tipo}` }));
+transmissao.assinar((e) => transmitir({ ...e, tipo: `envio_${e.tipo}` }));
 
 // Alerta e mensagem no privado viram aviso no WhatsApp de quem coordena.
 // Cada campanha manda pelo PRÓPRIO número — ver a nota em notificar.js.
@@ -677,6 +679,52 @@ async function api(req, res, url, sessao) {
         grupos: listarGrupos().map((g) => ({ nome: g.nome, membros: g.membros }))
       });
     }
+    // --- transmissão (disparo privado) --------------------------------------
+    if (rota.startsWith('/transmissao')) {
+      if (!pode('adicionarEmMassa')) return negar();
+
+      if (rota === '/transmissao' && metodo === 'GET') {
+        return json(res, {
+          itens: transmissao.listar(),
+          estado: transmissao.estadoDoEnvio(),
+          impedimento: transmissao.porQueNaoAgora(),
+          janela: transmissao.janelaLegal({}),
+          limites: transmissao.LIMITES,
+          calendario: transmissao.CALENDARIO,
+          rodape: transmissao.RODAPE_OPTOUT
+        });
+      }
+
+      if (rota === '/transmissao/previa' && metodo === 'POST') {
+        const { filtros = {}, limite = null, modelo = '' } = await lerCorpo(req);
+        const lista = transmissao.elegiveis(filtros).slice(0, limite ? Number(limite) : undefined);
+        return json(res, {
+          total: lista.length,
+          exemplo: lista[0] ? transmissao.montarTexto(modelo || '{saudacao}!', lista[0], 0) : null,
+          primeiros: lista.slice(0, 8).map((p) => ({ nome: p.nome, cidade: p.cidade, faixa: p.faixa_apoio }))
+        });
+      }
+
+      if (rota === '/transmissao' && metodo === 'POST') {
+        try {
+          return json(res, transmissao.criar({ ...(await lerCorpo(req)), criadaPor: usuario.email }));
+        } catch (erro) { return json(res, { erro: erro.message }, 400); }
+      }
+
+      const casaT = rota.match(/^\/transmissao\/(\d+)(\/[a-z]+)?$/);
+      if (casaT) {
+        const id = Number(casaT[1]);
+        if (!casaT[2] && metodo === 'GET') return json(res, transmissao.obter(id) ?? { erro: 'não encontrada' });
+        if (metodo === 'POST') {
+          try {
+            if (casaT[2] === '/iniciar') return json(res, transmissao.iniciar(id));
+            if (casaT[2] === '/pausar') return json(res, transmissao.pausar(id));
+            if (casaT[2] === '/cancelar') return json(res, transmissao.cancelar(id));
+          } catch (erro) { return json(res, { erro: erro.message }, 400); }
+        }
+      }
+    }
+
     if (rota.startsWith('/whatsapp/') && metodo === 'POST') {
       if (!pode('conectarWhatsapp')) return negar();
       if (rota === '/whatsapp/conectar') return json(res, await whatsapp.conectar());

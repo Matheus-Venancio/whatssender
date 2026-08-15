@@ -98,7 +98,7 @@ git push
 O Render publica sozinho. Confirme:
 
 ```bash
-curl https://claudiacamargo.onrender.com/api/saude
+curl https://whatsappsender.com/api/saude
 ```
 
 ## 4. Crie as campanhas em produção
@@ -181,7 +181,7 @@ fecha o socket com `end()`, não `logout()`.
 ## Depois de tudo
 
 ```bash
-curl https://claudiacamargo.onrender.com/api/saude
+curl https://whatsappsender.com/api/saude
 ```
 
 ```json
