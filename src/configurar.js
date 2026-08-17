@@ -2,7 +2,7 @@
 //
 //   npm run configurar                       -> migra a base antiga e cria o admin
 //   npm run configurar -- --campanha "Fernando Souza" --cargo "Vereador - Campinas"
-//   n pm run configurar -- --usuario ana@x.com --nome "Ana" --papel equipe --campanha-slug fernando
+//   n 0pm run configurar -- --usuario ana@x.com --nome "Ana" --papel equipe --campanha-slug fernando
 //   npm run configurar -- --listar
 //
 // A migração acontece uma vez: data/rede.db + data/auth + data/leads viram

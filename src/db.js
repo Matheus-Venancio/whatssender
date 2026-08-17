@@ -287,6 +287,9 @@ CREATE TABLE IF NOT EXISTS transmissoes (
   titulo      TEXT NOT NULL,
   modelo      TEXT NOT NULL,          -- texto com {nome} e {cidade}
   tipo        TEXT NOT NULL DEFAULT 'propaganda',  -- propaganda|interno
+  midia       TEXT,                   -- caminho do arquivo anexado, se houver
+  midia_tipo  TEXT,                   -- imagem|video|audio
+  midia_nome  TEXT,
   criada_em   INTEGER NOT NULL,
   criada_por  TEXT,
   situacao    TEXT NOT NULL DEFAULT 'rascunho',  -- rascunho|enviando|pausada|concluida|cancelada

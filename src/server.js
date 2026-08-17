@@ -40,9 +40,23 @@ const json = (res, dados, status = 200) => {
   res.end(JSON.stringify(dados));
 };
 
+// Teto do corpo da requisição. Existe por causa do upload de mídia: sem
+// limite, um POST grande o bastante derruba o processo por falta de memória,
+// e no Render isso é o serviço inteiro caindo. 24 MB cobre um vídeo de 12 MB
+// em base64 (que cresce ~33%) com folga.
+const CORPO_MAXIMO = Number(process.env.CORPO_MAXIMO_MB || 24) * 1024 * 1024;
+
 async function lerCorpo(req) {
   const partes = [];
-  for await (const pedaco of req) partes.push(pedaco);
+  let bytes = 0;
+  for await (const pedaco of req) {
+    bytes += pedaco.length;
+    if (bytes > CORPO_MAXIMO) {
+      req.destroy();
+      throw Object.assign(new Error('Arquivo grande demais'), { grande: true });
+    }
+    partes.push(pedaco);
+  }
   if (!partes.length) return {};
   try { return JSON.parse(Buffer.concat(partes).toString('utf8')); } catch { return {}; }
 }
@@ -695,9 +709,33 @@ async function api(req, res, url, sessao) {
         });
       }
 
+      // Lista para escolher pessoa a pessoa. Já vem filtrada pelas mesmas
+      // regras do disparo: o que aparece aqui é o que pode receber.
+      if (rota === '/transmissao/elegiveis' && metodo === 'POST') {
+        const { filtros = {}, busca = '' } = await lerCorpo(req);
+        const termo = String(busca).trim().toLowerCase();
+        let lista = transmissao.elegiveis(filtros);
+        if (termo) {
+          lista = lista.filter((p) =>
+            (p.nome || '').toLowerCase().includes(termo)
+            || (p.telefone || '').includes(termo)
+            || (p.cidade || '').toLowerCase().includes(termo));
+        }
+        return json(res, { total: lista.length, itens: lista.slice(0, 300) });
+      }
+
+      if (rota === '/transmissao/midia' && metodo === 'POST') {
+        try { return json(res, transmissao.guardarMidia(await lerCorpo(req))); }
+        catch (erro) { return json(res, { erro: erro.message }, 400); }
+      }
+
       if (rota === '/transmissao/previa' && metodo === 'POST') {
-        const { filtros = {}, limite = null, modelo = '' } = await lerCorpo(req);
-        const lista = transmissao.elegiveis(filtros).slice(0, limite ? Number(limite) : undefined);
+        const { filtros = {}, limite = null, modelo = '', pessoaIds = null } = await lerCorpo(req);
+        // Escolha manual manda: se a equipe marcou nomes, é essa a lista.
+        let lista = pessoaIds?.length
+          ? transmissao.elegiveis({}).filter((p) => pessoaIds.includes(p.id))
+          : transmissao.elegiveis(filtros);
+        if (limite) lista = lista.slice(0, Number(limite));
         return json(res, {
           total: lista.length,
           exemplo: lista[0] ? transmissao.montarTexto(modelo || '{saudacao}!', lista[0], 0) : null,
@@ -816,6 +854,13 @@ const servidor = createServer(async (req, res) => {
 
     return servirArquivo(res, url.pathname);
   } catch (erro) {
+    // Corpo acima do teto não é falha do servidor: é o usuário mandando um
+    // arquivo grande demais, e ele precisa saber disso, não ver "erro 500".
+    if (erro.grande) {
+      return json(res, {
+        erro: `Arquivo grande demais. O limite é ${CORPO_MAXIMO / 1024 / 1024} MB.`
+      }, 413);
+    }
     console.error('[erro]', erro);
     return json(res, { erro: erro.message }, 500);
   }

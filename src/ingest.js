@@ -157,7 +157,11 @@ export function retratoDaPessoa(pessoaId) {
  * Abaixo-assinado / formulário de cadastro.
  * O telefone é a chave que costura o cadastro com quem já está nos grupos.
  */
-export function salvarCadastro({ telefone, nome, cidade, bairro = null, atuacao, email = null, observacoes = null, ts = agora() }) {
+// `nome`, `cidade` e `atuacao` têm padrão porque `undefined` faz o UPDATE
+// falhar no node:sqlite — a pessoa entrava pelo INSERT e ficava sem nome e sem
+// cadastro_em, isto é, invisível para o disparo. O formulário sempre manda os
+// três; quem chama pela API, nem sempre.
+export function salvarCadastro({ telefone, nome = null, cidade = null, bairro = null, atuacao = null, email = null, observacoes = null, ts = agora() }) {
   const digitos = String(telefone || '').replace(/\D/g, '');
   if (digitos.length < 10) throw new Error('Telefone inválido');
   const completo = digitos.startsWith('55') ? digitos : `55${digitos}`;

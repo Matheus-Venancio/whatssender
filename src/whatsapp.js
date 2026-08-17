@@ -823,7 +823,24 @@ export async function conectar({ parearCom = null } = {}) {
     if (connection === 'open') {
       // A fila de adição só funciona com o socket vivo.
       // O disparo privado usa o mesmo socket — e só existe enquanto ele existe.
-      transmissao.registrarExecutor((jid, texto) => sessao().sock.sendMessage(jid, { text: texto }));
+      transmissao.registrarExecutor(async (jid, texto, anexo) => {
+        if (!anexo) return sessao().sock.sendMessage(jid, { text: texto });
+
+        // Com anexo o texto vira legenda — mandar imagem e texto separados
+        // gera duas notificações e parece disparo automático.
+        const conteudo = { caption: texto || undefined };
+        if (anexo.tipo === 'imagem') conteudo.image = { url: anexo.caminho };
+        else if (anexo.tipo === 'video') conteudo.video = { url: anexo.caminho };
+        else if (anexo.tipo === 'audio') {
+          // Áudio não aceita legenda: o WhatsApp descarta. Vai o áudio como
+          // mensagem de voz e, se houver texto, ele segue antes.
+          if (texto) await sessao().sock.sendMessage(jid, { text: texto });
+          return sessao().sock.sendMessage(jid, {
+            audio: { url: anexo.caminho }, mimetype: 'audio/mp4', ptt: true
+          });
+        }
+        return sessao().sock.sendMessage(jid, conteudo);
+      });
 
       registrarExecutor({
         adicionar: async (grupoJid, pessoaJid) => {

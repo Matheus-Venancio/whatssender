@@ -629,18 +629,43 @@ async function formularioTransmissao() {
           </small>
         </div>
 
-        <div class="campo"><label>Quem recebe</label>
+        <div class="campo"><label>Anexo (opcional)</label>
+          <input id="tx-arquivo" type="file" accept="image/*,video/mp4,audio/*">
+          <small style="display:block;margin-top:5px;font-size:11.5px;color:var(--tinta-3);line-height:1.5">
+            Foto, vídeo ou áudio. A mensagem acima vira a legenda — no áudio ela vai
+            antes, porque o WhatsApp descarta legenda de áudio. Até 12 MB.
+          </small>
+          <div id="tx-anexo-info" style="margin-top:6px;font-size:12px"></div>
+        </div>
+      </div>
+
+      <div class="bloco">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">Quem recebe</div>
+        <div class="campo"><label>Filtrar por potencial</label>
           <select id="tx-apoio">
             <option value="">Todos os elegíveis</option>
             ${faixas.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('')}
           </select>
         </div>
         <div class="campo"><label>Cidade (opcional)</label><input id="tx-cidade"></div>
-        <div class="campo"><label>Limite de pessoas (opcional)</label>
-          <input id="tx-limite" type="number" min="1" placeholder="sem limite"></div>
+
+        <div class="campo"><label>Buscar por nome, telefone ou cidade</label>
+          <input id="tx-busca" placeholder="digite para filtrar a lista"></div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin:8px 0">
+          <button class="btn" data-acao="tx-carregar">↻ Carregar lista</button>
+          <button class="btn" data-acao="tx-todos">Marcar todos</button>
+          <button class="btn" data-acao="tx-nenhum">Desmarcar</button>
+          <span id="tx-contagem" class="dica" style="margin-left:auto"></span>
+        </div>
+
+        <div id="tx-lista" style="max-height:320px;overflow-y:auto;border:1px solid var(--linha);
+             border-radius:9px;padding:4px">
+          <p class="vazio" style="padding:14px">Clique em <b>Carregar lista</b> para escolher pessoa a pessoa.</p>
+        </div>
       </div>
 
-      <div id="tx-previa" class="alerta info">Clique em <b>Ver prévia</b> para conferir antes de criar.</div>
+      <div id="tx-previa" class="alerta info">Selecione quem recebe e clique em <b>Ver prévia</b>.</div>
 
       <button class="btn" style="width:100%;justify-content:center;padding:11px;margin-bottom:8px"
               data-acao="tx-previa">👁 Ver prévia</button>
@@ -649,6 +674,49 @@ async function formularioTransmissao() {
     </div>`;
   gaveta.classList.add('aberto');
   overlay.classList.add('aberto');
+
+  estado.txSelecionados = new Set();
+  estado.txMidia = null;
+
+  // O arquivo é lido no navegador e mandado em base64 — evita depender de
+  // multipart no servidor, que é bem mais código para o mesmo resultado.
+  $('#tx-arquivo', gaveta).addEventListener('change', async (e) => {
+    const arquivo = e.target.files?.[0];
+    const info = $('#tx-anexo-info');
+    if (!arquivo) { estado.txMidia = null; info.textContent = ''; return; }
+
+    const mb = arquivo.size / 1024 / 1024;
+    if (mb > 12) {
+      e.target.value = '';
+      estado.txMidia = null;
+      info.innerHTML = `<span style="color:var(--vermelho)">${mb.toFixed(1)} MB — o limite é 12 MB.</span>`;
+      return;
+    }
+
+    info.textContent = 'enviando…';
+    const base64 = await new Promise((ok) => {
+      const leitor = new FileReader();
+      leitor.onload = () => ok(leitor.result);
+      leitor.readAsDataURL(arquivo);
+    });
+
+    const familia = arquivo.type.startsWith('image') ? 'imagem'
+      : arquivo.type.startsWith('video') ? 'video'
+        : arquivo.type.startsWith('audio') ? 'audio' : null;
+
+    const r = await api('/transmissao/midia', {
+      method: 'POST', body: { nome: arquivo.name, tipo: familia, base64 }
+    });
+    if (r.erro) { estado.txMidia = null; info.innerHTML = `<span style="color:var(--vermelho)">${esc(r.erro)}</span>`; return; }
+
+    estado.txMidia = r;
+    info.innerHTML = `✅ ${esc(r.nome)} · ${(r.bytes / 1024 / 1024).toFixed(1)} MB · ${esc(r.tipo)}`;
+  });
+
+  $('#tx-busca', gaveta).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); carregarElegiveis(); }
+  });
+
   $('#tx-titulo', gaveta)?.focus();
 }
 
@@ -656,6 +724,49 @@ const filtrosTransmissao = () => ({
   apoio: $('#tx-apoio')?.value || '',
   cidade: $('#tx-cidade')?.value.trim() || ''
 });
+
+/** Preenche a lista de escolha. Marca por padrão quem já estava marcado. */
+async function carregarElegiveis() {
+  const caixa = $('#tx-lista');
+  if (!caixa) return;
+  caixa.innerHTML = '<p class="vazio" style="padding:14px">carregando…</p>';
+
+  const r = await api('/transmissao/elegiveis', {
+    method: 'POST',
+    body: { filtros: filtrosTransmissao(), busca: $('#tx-busca')?.value || '' }
+  });
+
+  if (!r.itens?.length) {
+    caixa.innerHTML = '<p class="vazio" style="padding:14px">Ninguém elegível com esses filtros. '
+      + 'Só recebe quem já tem vínculo: está na agenda, já conversou ou se cadastrou.</p>';
+    atualizarContagem(0);
+    return;
+  }
+
+  caixa.innerHTML = r.itens.map((p) => `
+    <label style="display:flex;gap:9px;align-items:center;padding:7px 9px;border-radius:7px;cursor:pointer">
+      <input type="checkbox" data-pessoa-tx="${p.id}" ${estado.txSelecionados.has(p.id) ? 'checked' : ''}>
+      <span style="min-width:0;flex:1">
+        <div style="font-size:13px;font-weight:500">${esc(p.nome || p.telefone)}</div>
+        <div style="font-size:11.5px;color:var(--tinta-3)">${esc(p.cidade || 'sem cidade')} ·
+          ${esc(p.faixa_apoio)} · ${p.propensao}/100</div>
+      </span>
+    </label>`).join('')
+    + (r.total > r.itens.length
+      ? `<p class="dica" style="padding:8px 10px">mostrando ${r.itens.length} de ${r.total} — refine a busca</p>`
+      : '');
+
+  atualizarContagem(r.total);
+}
+
+function atualizarContagem(totalDisponivel = null) {
+  const el = $('#tx-contagem');
+  if (!el) return;
+  const n = estado.txSelecionados.size;
+  el.textContent = n
+    ? `${n} selecionada(s)`
+    : (totalDisponivel != null ? `${totalDisponivel} disponível(is)` : '');
+}
 
 VISTAS.fila = async () => {
   const f = estado.fila = await api('/fila');
@@ -2274,6 +2385,29 @@ document.addEventListener('click', async (e) => {
 
   if (alvo('[data-acao="nova-transmissao"]')) return formularioTransmissao();
 
+  if (alvo('[data-acao="tx-carregar"]')) return carregarElegiveis();
+
+  if (alvo('[data-acao="tx-todos"]') || alvo('[data-acao="tx-nenhum"]')) {
+    const marcar = Boolean(alvo('[data-acao="tx-todos"]'));
+    for (const caixa of document.querySelectorAll('[data-pessoa-tx]')) {
+      caixa.checked = marcar;
+      const id = Number(caixa.dataset.pessoaTx);
+      if (marcar) estado.txSelecionados.add(id);
+      else estado.txSelecionados.delete(id);
+    }
+    atualizarContagem();
+    return;
+  }
+
+  const caixaPessoa = e.target.closest?.('[data-pessoa-tx]');
+  if (caixaPessoa) {
+    const id = Number(caixaPessoa.dataset.pessoaTx);
+    if (caixaPessoa.checked) estado.txSelecionados.add(id);
+    else estado.txSelecionados.delete(id);
+    atualizarContagem();
+    return;
+  }
+
   if (alvo('[data-acao="tx-previa"]')) {
     const b = alvo('[data-acao="tx-previa"]');
     b.disabled = true; b.textContent = 'conferindo…';
@@ -2281,7 +2415,7 @@ document.addEventListener('click', async (e) => {
       method: 'POST',
       body: {
         filtros: filtrosTransmissao(),
-        limite: Number($('#tx-limite').value) || null,
+        pessoaIds: estado.txSelecionados?.size ? [...estado.txSelecionados] : null,
         modelo: $('#tx-modelo').value
       }
     });
@@ -2304,14 +2438,19 @@ document.addEventListener('click', async (e) => {
     const b = alvo('[data-acao="tx-criar"]');
     const titulo = $('#tx-titulo').value.trim();
     const modelo = $('#tx-modelo').value.trim();
-    if (!titulo || !modelo) return toast('Faltam dados', 'Nome e mensagem são obrigatórios.', 'critico');
+    if (!titulo) return toast('Faltam dados', 'Dê um nome à transmissão.', 'critico');
+    if (!modelo && !estado.txMidia) {
+      return toast('Faltam dados', 'Escreva a mensagem ou anexe um arquivo.', 'critico');
+    }
 
     b.disabled = true; b.textContent = 'criando…';
     const r = await api('/transmissao', {
       method: 'POST',
       body: {
         titulo, modelo, tipo: $('#tx-tipo').value,
-        filtros: filtrosTransmissao(), limite: Number($('#tx-limite').value) || null
+        filtros: filtrosTransmissao(),
+        pessoaIds: estado.txSelecionados?.size ? [...estado.txSelecionados] : null,
+        midia: estado.txMidia || null
       }
     });
     b.disabled = false; b.textContent = 'Criar transmissão';

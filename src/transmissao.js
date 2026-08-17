@@ -47,7 +47,9 @@
 // campanha antes do primeiro disparo — este módulo ajuda a cumprir a lei, não
 // substitui a assessoria jurídica.
 
-import { db, agora, campanhaAtual, comCampanha } from './db.js';
+import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { db, agora, campanhaAtual, comCampanha, pastaDaCampanha } from './db.js';
 import { porCampanha } from './porcampanha.js';
 import { registrarEvento } from './ingest.js';
 
@@ -207,10 +209,41 @@ export function montarTexto(modelo, pessoa, indice = 0) {
   return texto;
 }
 
+// ----------------------------------------------------------------- mídia
+export const TIPOS_MIDIA = { imagem: ['jpg', 'jpeg', 'png', 'webp'], video: ['mp4', '3gp'], audio: ['mp3', 'ogg', 'opus', 'm4a', 'aac'] };
+export const TAMANHO_MAXIMO = Number(process.env.ENVIO_MIDIA_MB || 12) * 1024 * 1024;
+
+/**
+ * Grava o anexo na pasta da campanha e devolve o caminho.
+ *
+ * O arquivo NÃO vai para public/: é material de campanha, e servir por URL
+ * pública deixaria qualquer um baixar. Ele só existe para o envio.
+ */
+export function guardarMidia({ nome, tipo, base64 }) {
+  const extensao = String(nome || '').split('.').pop()?.toLowerCase() || '';
+  const familia = Object.entries(TIPOS_MIDIA).find(([, exts]) => exts.includes(extensao))?.[0];
+  if (!familia) {
+    throw new Error(`Formato .${extensao} não serve. Use ${Object.values(TIPOS_MIDIA).flat().join(', ')}.`);
+  }
+
+  const dados = Buffer.from(String(base64).split(',').pop(), 'base64');
+  if (dados.length > TAMANHO_MAXIMO) {
+    throw new Error(`Arquivo de ${(dados.length / 1024 / 1024).toFixed(1)} MB — o limite é ${TAMANHO_MAXIMO / 1024 / 1024} MB.`);
+  }
+
+  const pasta = join(pastaDaCampanha(campanhaAtual()), 'midia');
+  mkdirSync(pasta, { recursive: true });
+  const arquivo = join(pasta, `${Date.now()}-${String(nome).replace(/[^\w.-]/g, '_')}`);
+  writeFileSync(arquivo, dados);
+
+  return { caminho: arquivo, tipo: tipo || familia, nome, bytes: dados.length };
+}
+
 // ---------------------------------------------------------------- transmissões
-export function criar({ titulo, modelo, tipo = 'propaganda', filtros = {}, pessoaIds = null, limite = null, criadaPor = null }) {
+export function criar({ titulo, modelo, tipo = 'propaganda', filtros = {}, pessoaIds = null, limite = null, criadaPor = null, midia = null }) {
   if (!titulo?.trim()) throw new Error('Dê um nome a esta transmissão');
-  if (!modelo?.trim()) throw new Error('Escreva a mensagem');
+  // Com anexo, o texto vira legenda e pode ficar vazio — sem anexo, não.
+  if (!modelo?.trim() && !midia) throw new Error('Escreva a mensagem ou anexe um arquivo');
 
   let lista = pessoaIds?.length
     ? elegiveis({}).filter((p) => pessoaIds.includes(p.id))
@@ -218,9 +251,11 @@ export function criar({ titulo, modelo, tipo = 'propaganda', filtros = {}, pesso
   if (limite) lista = lista.slice(0, Number(limite));
   if (!lista.length) throw new Error('Nenhuma pessoa elegível com esses filtros');
 
-  const info = db.prepare(
-    'INSERT INTO transmissoes (titulo, modelo, tipo, criada_em, criada_por) VALUES (?,?,?,?,?)'
-  ).run(titulo.trim(), modelo.trim(), tipo === 'interno' ? 'interno' : 'propaganda', agora(), criadaPor);
+  const info = db.prepare(`
+    INSERT INTO transmissoes (titulo, modelo, tipo, criada_em, criada_por, midia, midia_tipo, midia_nome)
+    VALUES (?,?,?,?,?,?,?,?)
+  `).run(titulo.trim(), (modelo || '').trim(), tipo === 'interno' ? 'interno' : 'propaganda',
+    agora(), criadaPor, midia?.caminho ?? null, midia?.tipo ?? null, midia?.nome ?? null);
   const id = Number(info.lastInsertRowid);
 
   const inserir = db.prepare(
@@ -374,6 +409,7 @@ export async function girar() {
 
   const alvo = db.prepare(`
     SELECT a.transmissao_id, a.pessoa_id, t.modelo, t.titulo,
+           t.midia, t.midia_tipo, t.midia_nome,
            p.wa_jid, p.telefone, p.cidade, p.opt_out,
            COALESCE(NULLIF(p.nome,''), p.nome_agenda, p.nome_wa) AS nome
       FROM transmissao_alvos a
@@ -407,7 +443,10 @@ export async function girar() {
     const texto = montarTexto(alvo.modelo, alvo, indice);
 
     try {
-      await fila.executor(alvo.wa_jid || `${alvo.telefone}@s.whatsapp.net`, texto);
+      const anexo = alvo.midia && existsSync(alvo.midia)
+        ? { caminho: alvo.midia, tipo: alvo.midia_tipo, nome: alvo.midia_nome }
+        : null;
+      await fila.executor(alvo.wa_jid || `${alvo.telefone}@s.whatsapp.net`, texto, anexo);
 
       db.prepare(
         "UPDATE transmissao_alvos SET situacao='enviado', enviado_em=? WHERE transmissao_id=? AND pessoa_id=?"
