@@ -17,7 +17,7 @@
     "filtrar-uf": "node --no-warnings=ExperimentalWarning src/filtrar-uf.js",
     "firebase:sync": "node --no-warnings=ExperimentalWarning src/sincronizar-firebase.js",
     "firebase:previa": "node --no-warnings=ExperimentalWarning src/sincronizar-firebase.js --teste",
-    "teste": "node --no-warnings=ExperimentalWarning src/teste-firestore.js && node --no-warnings=ExperimentalWarning src/teste-alertas.js && node --no-warnings=ExperimentalWarning src/teste-risco.js && node --no-warnings=ExperimentalWarning src/teste-conversa.js && node --no-warnings=ExperimentalWarning src/teste-adicao.js && node --no-warnings=ExperimentalWarning src/teste-contas.js && node --no-warnings=ExperimentalWarning src/teste-trava.js && node --no-warnings=ExperimentalWarning src/teste-apoio.js && node --no-warnings=ExperimentalWarning src/teste-nuvem.js && node --no-warnings=ExperimentalWarning src/teste-transmissao.js",
+    "teste": "node --no-warnings=ExperimentalWarning src/teste-firestore.js && node --no-warnings=ExperimentalWarning src/teste-alertas.js && node --no-warnings=ExperimentalWarning src/teste-risco.js && node --no-warnings=ExperimentalWarning src/teste-conversa.js && node --no-warnings=ExperimentalWarning src/teste-adicao.js && node --no-warnings=ExperimentalWarning src/teste-contas.js && node --no-warnings=ExperimentalWarning src/teste-trava.js && node --no-warnings=ExperimentalWarning src/teste-apoio.js && node --no-warnings=ExperimentalWarning src/teste-nuvem.js && node --no-warnings=ExperimentalWarning src/teste-transmissao.js && node --no-warnings=ExperimentalWarning src/teste-wacore.js",
     "teste:firestore": "node --no-warnings=ExperimentalWarning src/teste-firestore.js",
     "teste:alertas": "node --no-warnings=ExperimentalWarning src/teste-alertas.js",
     "teste:risco": "node --no-warnings=ExperimentalWarning src/teste-risco.js",
@@ -30,7 +30,8 @@
     "teste:apoio": "node --no-warnings=ExperimentalWarning src/teste-apoio.js",
     "restaurar": "node --no-warnings=ExperimentalWarning src/restaurar-do-firestore.js",
     "teste:nuvem": "node --no-warnings=ExperimentalWarning src/teste-nuvem.js",
-    "teste:transmissao": "node --no-warnings=ExperimentalWarning src/teste-transmissao.js"
+    "teste:transmissao": "node --no-warnings=ExperimentalWarning src/teste-transmissao.js",
+    "teste:wacore": "node --no-warnings=ExperimentalWarning src/teste-wacore.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",

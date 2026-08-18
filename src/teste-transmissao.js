@@ -9,6 +9,14 @@
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+// A janela de horário é aberta AQUI, antes de importar o módulo: os limites são
+// lidos do ambiente na carga. Sem isto, o teste passava de dia e falhava depois
+// das 20h — a fila recusava por horário e as asserções de envio nunca chegavam
+// a rodar. O comportamento de recusa fora do horário é testado à parte, com uma
+// instância própria, em vez de depender de quando a suíte roda.
+process.env.ENVIO_HORA_INICIO = '0';
+process.env.ENVIO_HORA_FIM = '24';
+
 const PASTA = join(process.cwd(), 'data-teste-transmissao');
 process.env.DATA_DIR = PASTA;
 rmSync(PASTA, { recursive: true, force: true });
@@ -133,12 +141,17 @@ const resultado = await comCampanha(SLUG, async () => {
   t.iniciar(criada.id);
 
   const primeira = await t.girar();
-  return { criada, primeira, detalhe: t.obter(criada.id) };
+  // O impedimento tem que ser lido AQUI dentro: porQueNaoAgora consulta a fila
+  // da campanha ativa. Fora do comCampanha ele estoura — e só estourava à
+  // noite, quando o envio é recusado por horário e a asserção chegava nele.
+  return { criada, primeira, impedimento: t.porQueNaoAgora(), detalhe: t.obter(criada.id) };
 });
 
 ok(resultado.criada.alvos === 3, `a lista nasce com ${resultado.criada.alvos} pessoas`);
-ok(resultado.primeira.enviada === true || Boolean(t.porQueNaoAgora()),
-  resultado.primeira.enviada ? 'primeira mensagem enviada' : `não enviou: ${resultado.primeira.motivo}`);
+ok(resultado.primeira.enviada === true || Boolean(resultado.impedimento),
+  resultado.primeira.enviada
+    ? 'primeira mensagem enviada'
+    : `não enviou, com motivo declarado: ${resultado.impedimento}`);
 
 if (resultado.primeira.enviada) {
   ok(enviados[0].jid.endsWith('@s.whatsapp.net'), 'enviou para um JID de telefone');
@@ -159,8 +172,15 @@ ok(/falhas seguidas/.test(parou.motivoPausa || ''), `motivo registrado: "${parou
 console.log('\n7) Limites de ritmo configurados');
 ok(t.LIMITES.intervaloMin >= 30, `intervalo mínimo de ${t.LIMITES.intervaloMin}s entre mensagens`);
 ok(t.LIMITES.porDia <= 300, `teto diário de ${t.LIMITES.porDia}`);
-ok(t.LIMITES.horaFim <= 21 && t.LIMITES.horaInicio >= 8,
-  `horário ${t.LIMITES.horaInicio}h–${t.LIMITES.horaFim}h`);
+// A janela deste processo foi aberta no topo para o teste não depender da hora.
+// A recusa por horário se prova com uma instância própria, de janela fechada.
+process.env.ENVIO_HORA_INICIO = '9';
+process.env.ENVIO_HORA_FIM = '9';
+const noturno = await import(`./transmissao.js?janela=${Date.now()}`);
+ok(noturno.dentroDoHorario(new Date('2026-08-17T14:00:00')) === false,
+  'fora da janela configurada, a fila recusa — mesmo às 14h');
+ok(noturno.dentroDoHorario(new Date('2026-08-17T03:00:00')) === false,
+  'de madrugada também recusa');
 
 try { rmSync(PASTA, { recursive: true, force: true }); } catch { /* Windows segura o arquivo */ }
 
