@@ -21,13 +21,18 @@
 // clientes dividem. Por isso o pareamento aqui exige
 // WACORE_PERMITIR_PAREAMENTO=true: trava consciente, não descuido.
 
-const BASE = (process.env.WACORE_BASE || 'https://wacore2.dartenmind.com.br').replace(/\/+$/, '');
-const TOKEN = process.env.WACORE_TOKEN || '';
-const PERMITIR_PAREAMENTO = process.env.WACORE_PERMITIR_PAREAMENTO === 'true';
+// LIDO A CADA USO, não na importação.
+//
+// Com `const TOKEN = process.env...` no topo, o módulo congelava o ambiente do
+// instante em que foi importado. Se o .env fosse carregado depois — e era, só
+// dentro de iniciarFirebase — o token ficava vazio para sempre, e o painel
+// dizia "WACORE_TOKEN não está configurado" com o token ali no arquivo.
+const base = () => (process.env.WACORE_BASE || 'https://wacore2.dartenmind.com.br').replace(/\/+$/, '');
+const token = () => (process.env.WACORE_TOKEN || '').trim();
 
-export const configurado = () => Boolean(TOKEN);
-export const baseUrl = () => BASE;
-export const pareamentoLiberado = () => PERMITIR_PAREAMENTO;
+export const configurado = () => Boolean(token());
+export const baseUrl = () => base();
+export const pareamentoLiberado = () => process.env.WACORE_PERMITIR_PAREAMENTO === 'true';
 
 /** Erro com o status HTTP preservado — quem chama precisa distinguir 404 de 429. */
 export class ErroWaCore extends Error {
@@ -39,12 +44,12 @@ export class ErroWaCore extends Error {
 }
 
 async function chamar(metodo, caminho, corpo = null, { tentativa = 1 } = {}) {
-  if (!TOKEN) throw new ErroWaCore('WACORE_TOKEN não configurado', 0, null);
+  if (!configurado()) throw new ErroWaCore('WACORE_TOKEN não configurado', 0, null);
 
-  const resposta = await fetch(`${BASE}${caminho}`, {
+  const resposta = await fetch(`${base()}${caminho}`, {
     method: metodo,
     headers: {
-      'X-App-Token': TOKEN,
+      'X-App-Token': token(),
       ...(corpo ? { 'Content-Type': 'application/json' } : {})
     },
     body: corpo ? JSON.stringify(corpo) : undefined,
@@ -117,7 +122,7 @@ export const esperandoPareamento = (s) => ['qr', 'pairing'].includes(String(s ||
  * afeta a reputação do IP de todos os clientes do fornecedor.
  */
 export function parear({ externalId, userExternalId = null, pairingPhone = null }) {
-  if (!PERMITIR_PAREAMENTO) {
+  if (!pareamentoLiberado()) {
     throw new ErroWaCore(
       'Pareamento bloqueado neste ambiente. A documentação do WA-Core2 proíbe '
       + 'connect-by-external no ambiente compartilhado: ele pareia um WhatsApp real e '
@@ -163,13 +168,13 @@ export function enviar({ externalId, userExternalId = null, to, texto = null, mi
 
 /** Diagnóstico: token, alcance e o que o app enxerga. */
 export async function diagnostico() {
-  const saude = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(15_000) })
+  const saude = await fetch(`${base()}/health`, { signal: AbortSignal.timeout(15_000) })
     .then((r) => r.json()).catch(() => null);
   const teams = await listarTeams().catch((e) => ({ erro: e.message, status: e.status }));
   return {
-    base: BASE,
+    base: base(),
     tokenConfigurado: configurado(),
-    pareamentoLiberado: PERMITIR_PAREAMENTO,
+    pareamentoLiberado: pareamentoLiberado(),
     servico: saude?.service ?? null,
     saude: saude?.status ?? null,
     teams

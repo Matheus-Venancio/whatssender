@@ -1,3 +1,6 @@
+// PRIMEIRO import, de propósito: em ESM os imports resolvem antes do corpo do
+// arquivo, então o .env precisa entrar aqui para os outros módulos o enxergarem.
+import './ambiente.js';
 import { createServer } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
