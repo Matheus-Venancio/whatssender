@@ -16,6 +16,8 @@ import * as whatsapp from './whatsapp.js';
 import * as firebase from './firestore.js';
 import * as adicao from './adicionar-grupo.js';
 import * as transmissao from './transmissao.js';
+import * as instancia from './instancia.js';
+import * as wacore from './wacore.js';
 import { importarPasta } from './importar-leads.js';
 import * as contas from './contas.js';
 import { restaurarDoFirestore } from './restaurar.js';
@@ -685,10 +687,35 @@ async function api(req, res, url, sessao) {
     }
 
     // --- WhatsApp ----------------------------------------------------------
+    if (rota === '/whatsapp/provedor' && metodo === 'POST') {
+      if (!pode('conectarWhatsapp')) return negar();
+      const { provedor } = await lerCorpo(req);
+      if (!['baileys', 'wacore'].includes(provedor)) {
+        return json(res, { erro: 'Provedor deve ser "baileys" ou "wacore"' }, 400);
+      }
+      if (provedor === 'wacore' && !wacore.configurado()) {
+        return json(res, { erro: 'WACORE_TOKEN não está configurado neste servidor.' }, 400);
+      }
+      contas.atualizarCampanha(campanha.slug, { provedor });
+      nuvem.salvarContas().catch(() => {});
+      return json(res, { ok: true, provedor });
+    }
+
+    if (rota === '/whatsapp/wacore' && metodo === 'GET') {
+      if (!pode('conectarWhatsapp')) return negar();
+      return json(res, await wacore.diagnostico());
+    }
+
     if (rota === '/whatsapp/status' && metodo === 'GET') {
       await whatsapp.checarDependencias();
+      // O estado vem do provedor da campanha. No WA-Core2 é uma consulta HTTP;
+      // no Baileys, o estado local do socket.
+      const estadoAtual = await instancia.estado(campanha.slug);
       return json(res, {
-        ...whatsapp.estadoDoWhatsapp(),
+        ...estadoAtual,
+        provedor: campanha.provedor || 'baileys',
+        wacoreDisponivel: wacore.configurado(),
+        pareamentoLiberado: wacore.pareamentoLiberado(),
         campanha: campanha.slug,
         grupos: listarGrupos().map((g) => ({ nome: g.nome, membros: g.membros }))
       });
@@ -765,7 +792,10 @@ async function api(req, res, url, sessao) {
 
     if (rota.startsWith('/whatsapp/') && metodo === 'POST') {
       if (!pode('conectarWhatsapp')) return negar();
-      if (rota === '/whatsapp/conectar') return json(res, await whatsapp.conectar());
+      if (rota === '/whatsapp/conectar') {
+        try { return json(res, await instancia.conectar(campanha.slug)); }
+        catch (erro) { return json(res, { erro: erro.message }, 400); }
+      }
 
       // Pareamento por telefone: a alternativa ao QR. Precisa começar de um
       // socket novo, então derruba o atual antes de subir pedindo o código.
@@ -785,12 +815,14 @@ async function api(req, res, url, sessao) {
         // O código de pareamento só existe para credencial NOVA: com a antiga
         // no disco o WhatsApp responde "Não foi possível conectar o
         // dispositivo" quando a pessoa digita o código.
-        await whatsapp.desconectar({ apagarSessao: true });
-        return json(res, await whatsapp.conectar({ parearCom: limpo }));
+        await instancia.desconectar(campanha.slug, { apagarSessao: true });
+        try {
+          return json(res, await instancia.conectar(campanha.slug, { pairingPhone: limpo }));
+        } catch (erro) { return json(res, { erro: erro.message }, 400); }
       }
       if (rota === '/whatsapp/desconectar') {
         const { apagarSessao } = await lerCorpo(req);
-        return json(res, await whatsapp.desconectar({ apagarSessao }));
+        return json(res, await instancia.desconectar(campanha.slug, { apagarSessao }));
       }
       if (rota === '/whatsapp/sincronizar') {
         try { return json(res, { grupos: await whatsapp.ressincronizar() }); }
@@ -979,6 +1011,17 @@ servidor.listen(PORTA, async () => {
 
   for (const c of campanhas) {
     console.log(`  · ${c.nome} → /cadastro/${c.slug}`);
+
+    // Campanha no WA-Core2 não tem socket local, então ninguém registraria o
+    // executor da fila de transmissão — ela ficaria criando listas que nunca
+    // saem. Aqui o despachante é a própria API, e a fila de ritmo continua a
+    // mesma: é ela que protege o número, não o rate limit do fornecedor.
+    if ((c.provedor || 'baileys') === 'wacore') {
+      comCampanha(c.slug, () => transmissao.registrarExecutor(
+        (jid, texto, anexo) => instancia.enviar(c.slug, jid, texto, anexo)
+      ));
+      console.log(`    provedor: WA-Core2${wacore.configurado() ? '' : ' (sem WACORE_TOKEN!)'}`);
+    }
     try {
       await comCampanha(c.slug, () => firebase.iniciarFirebase());
     } catch (erro) {

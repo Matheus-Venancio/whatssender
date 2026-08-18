@@ -824,6 +824,13 @@ export async function conectar({ parearCom = null } = {}) {
       // A fila de adição só funciona com o socket vivo.
       // O disparo privado usa o mesmo socket — e só existe enquanto ele existe.
       transmissao.registrarExecutor(async (jid, texto, anexo) => {
+        // Campanha migrada para o WA-Core2 continua usando ESTA fila de ritmo,
+        // só que despachando pela API. O rate limit do fornecedor é proteção de
+        // borda, não fila anti-banimento — a doc deles diz isso com todas as letras.
+        const instancia = await import('./instancia.js');
+        if (instancia.provedorDa(slug) === 'wacore') {
+          return instancia.enviar(slug, jid, texto, anexo);
+        }
         if (!anexo) return sessao().sock.sendMessage(jid, { text: texto });
 
         // Com anexo o texto vira legenda — mandar imagem e texto separados

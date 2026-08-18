@@ -2023,7 +2023,8 @@ VISTAS.conexao = async () => {
         ${s.status === 'conectado'
           ? `<button class="btn" data-acao="wa-sincronizar">↻ Sincronizar grupos</button>
              <button class="btn" data-acao="wa-desconectar">Desconectar</button>`
-          : `<button class="btn" data-acao="wa-parear">📱 Conectar por número</button>
+          : `<button class="btn" data-acao="wa-provedor">⚙ Origem: ${s.provedor === 'wacore' ? 'WA-Core2' : 'Baileys'}</button>
+             <button class="btn" data-acao="wa-parear">📱 Conectar por número</button>
              <button class="btn primario" data-acao="wa-conectar">Gerar QR Code</button>`}
       </div>
     </div>
@@ -2790,6 +2791,22 @@ document.addEventListener('click', async (e) => {
       body: { tagId: Number(tag.dataset.tag), remover: tag.dataset.remover === '1' }
     });
     return abrirPessoa(estado.pessoaAberta.id);
+  }
+
+  if (alvo('[data-acao="wa-provedor"]')) {
+    const atual = estado.whatsapp?.provedor || 'baileys';
+    const novo = atual === 'wacore' ? 'baileys' : 'wacore';
+    const texto = novo === 'wacore'
+      ? 'Trocar para WA-Core2?\n\nA conexão passa a ser mantida pelo fornecedor — '
+        + 'o número não cai a cada deploy. Exige WACORE_TOKEN configurado no servidor.'
+      : 'Voltar para Baileys?\n\nA conexão volta a viver neste processo, com a sessão '
+        + 'guardada no Firestore.';
+    if (!confirm(texto)) return;
+
+    const r = await api('/whatsapp/provedor', { method: 'POST', body: { provedor: novo } });
+    if (r.erro) return toast('Não deu', r.erro, 'critico');
+    toast('Origem alterada', `Agora usando ${novo === 'wacore' ? 'WA-Core2' : 'Baileys'}. Conecte de novo.`);
+    return render();
   }
 
   if (alvo('[data-acao="wa-parear"]')) {

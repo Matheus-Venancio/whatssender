@@ -65,6 +65,23 @@ CREATE INDEX IF NOT EXISTS idx_sessao_exp ON sessoes(expira_em);
 // campanhas/claudia — e a restauração volta vazia, sem erro nenhum.
 try { admin.exec('ALTER TABLE campanhas ADD COLUMN firebase_pasta TEXT'); } catch { /* já existe */ }
 
+// Provedor de WhatsApp por campanha.
+//
+//   baileys — socket dentro deste processo. A sessão é nossa, e sobrevive a
+//             deploy porque nuvem.js guarda a credencial no Firestore.
+//   wacore  — WA-Core2. Quem mantém a conexão é o fornecedor; aqui ficam só os
+//             identificadores para endereçar a linha.
+//
+// A escolha é por campanha, de propósito: dá para migrar um candidato por vez
+// e comparar entrega antes de mover o resto.
+for (const coluna of [
+  "provedor TEXT NOT NULL DEFAULT 'baileys'",
+  'wacore_external_id TEXT',   // UUID do team — a campanha
+  'wacore_user_id TEXT'        // UUID da linha — o número
+]) {
+  try { admin.exec(`ALTER TABLE campanhas ADD COLUMN ${coluna}`); } catch { /* já existe */ }
+}
+
 const DIA = 86_400_000;
 const DURACAO_SESSAO = 30 * DIA;
 
@@ -118,7 +135,8 @@ export const listarCampanhas = ({ apenasAtivas = false } = {}) =>
 
 export function atualizarCampanha(slug, campos) {
   const permitidos = ['nome', 'cargo', 'cor', 'ativa', 'firebase_key', 'firebase_prefixo',
-    'firebase_pasta', 'alerta_whatsapp', 'url_cadastro'];
+    'firebase_pasta', 'alerta_whatsapp', 'url_cadastro',
+    'provedor', 'wacore_external_id', 'wacore_user_id'];
   const sets = [];
   const valores = [];
   for (const campo of permitidos) {
@@ -152,6 +170,9 @@ export function configDaCampanha(slug) {
     // Onde esta campanha mora dentro do projeto compartilhado. Por padrão é o
     // próprio slug; pode divergir quando a árvore já existia antes.
     firebasePasta: c.firebase_pasta || c.slug,
+    provedor: c.provedor || 'baileys',
+    wacoreExternalId: c.wacore_external_id || null,
+    wacoreUserId: c.wacore_user_id || null,
     alertaWhatsapp: c.alerta_whatsapp || process.env.ALERTA_WHATSAPP || null,
     urlCadastro: c.url_cadastro || `/cadastro/${c.slug}`,
     pasta: pastaDaCampanha(c.slug)
