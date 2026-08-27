@@ -93,11 +93,9 @@ export async function estado(slug) {
  * Começa a conexão e devolve o que a tela precisa mostrar.
  * No WA-Core2 o QR já vem pronto como data URI — não geramos imagem nenhuma.
  */
-export async function conectar(slug, { pairingPhone = null, whatsappNumber = null } = {}) {
+export async function conectar(slug, { pairingPhone = null, whatsappNumber = null, modo = null } = {}) {
   if (provedorDa(slug) !== 'wacore') {
-    return pairingPhone
-      ? baileys.conectar({ parearCom: pairingPhone })
-      : baileys.conectar();
+    return baileys.conectar({ parearCom: pairingPhone, modo });
   }
 
   const { externalId, userExternalId } = await garantirLinha(slug, { whatsappNumber });

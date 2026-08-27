@@ -76,8 +76,21 @@ export const PESOS_APOIO = {
   agenda: 12,            // está salva na agenda do celular da campanha
   interesse: 10,         // demonstrou tema de interesse
   cadastro: 10,          // preencheu formulário ou assinou
-  alcance: 8             // está em mais de um grupo
+  alcance: 8,            // está em mais de um grupo
+  // Sinais de quem acabou de chegar pelo formulário — a população que a
+  // captação por embaixador cria. Sem eles, quem se declarou liderança e foi
+  // trazida por uma aliada de confiança pontuava 7 e caía em "Sem sinal", ao
+  // lado de um número que nunca deu sinal de nada. Isso esvaziava a fila de
+  // tratamento justamente na entrada do funil.
+  intencaoDeclarada: 22, // disse o que quer fazer: liderar, multiplicar, ajudar
+  indicacao: 14,         // veio pela indicação de um embaixador, não de anúncio frio
+  pautasEscolhidas: 6    // marcou mais de uma pauta: leu e se posicionou
 };
+
+// Rótulo legível da intenção, para o motivo aparecer em português no painel.
+const ROTULO_INTENCAO = Object.fromEntries(
+  Object.entries(INTENCOES).map(([chave, def]) => [chave, def.rotulo.toLowerCase()])
+);
 
 export const FAIXAS_APOIO = ['Provável apoiador', 'Possível apoiador', 'Contato frio', 'Sem sinal', 'Não abordar'];
 
@@ -89,7 +102,10 @@ export const CORES_APOIO = {
   'Não abordar': '#dc2626'
 };
 
-function calcularPropensao(m) {
+// Exportada para o teste conseguir medir a régua isoladamente, sem depender do
+// estado da base — é o que garante que um peso novo não infle a classificação
+// de quem não deu sinal nenhum.
+export function calcularPropensao(m) {
   const motivos = [];
   let total = 0;
 
@@ -157,6 +173,25 @@ function calcularPropensao(m) {
   // 5. Cadastro — vale, mas a campanha sem abaixo-assinado não fica de fora.
   if (m.assinaturas > 0) somar(PESOS_APOIO.cadastro, `assinou ${m.assinaturas} abaixo-assinado(s)`);
   else if (m.cadastro_em) somar(PESOS_APOIO.cadastro * 0.7, 'preencheu o formulário');
+
+  // 5b. Intenção declarada. Quem escreve "coordeno a associação do bairro" ou
+  // "quero ser voluntária" está dizendo o que vai fazer — é o sinal mais forte
+  // disponível sobre alguém que ainda não conversou com a campanha.
+  // Escala pelo peso do lexicon: liderança (4) vale mais que demanda (2).
+  if (m.intencao_peso > 0 && m.intencao_top !== 'critico') {
+    somar((Math.min(4, m.intencao_peso) / 4) * PESOS_APOIO.intencaoDeclarada,
+      `declarou intenção: ${ROTULO_INTENCAO[m.intencao_top] ?? m.intencao_top}`);
+  }
+
+  // 5c. Veio por indicação de embaixador. Confiança emprestada de quem trouxe:
+  // converte muito melhor do que clique em anúncio, e é medível.
+  if (m.indicado_por) somar(PESOS_APOIO.indicacao, 'chegou por indicação de embaixador');
+
+  // 5d. Marcou mais de uma pauta: leu o formulário em vez de só enviar.
+  if (m.temas_count > 1) {
+    somar(teto(m.temas_count - 1, 3) * PESOS_APOIO.pautasEscolhidas,
+      `escolheu ${m.temas_count} pautas`);
+  }
 
   // 6. Alcance: estar em mais de um grupo indica interesse ativo.
   if (m.grupos_count > 1) somar(teto(m.grupos_count - 1, 2) * PESOS_APOIO.alcance,
@@ -299,7 +334,14 @@ function agregados(referencia) {
            (SELECT COUNT(*) FROM alertas a
              WHERE a.pessoa_id = p.id AND a.tipo LIKE 'atrito:%') AS atritos,
            (SELECT COUNT(*) FROM membros mb
-             WHERE mb.pessoa_id = p.id AND mb.saiu_em IS NOT NULL) AS grupos_que_saiu
+             WHERE mb.pessoa_id = p.id AND mb.saiu_em IS NOT NULL) AS grupos_que_saiu,
+           -- Intenção declarada no formulário: o peso já vem do lexicon
+           -- (liderança 4, voluntário/multiplicador 3, demanda 2...).
+           (SELECT MAX(pi.peso) FROM pessoa_intencoes pi WHERE pi.pessoa_id = p.id) AS intencao_peso,
+           (SELECT pi.intencao FROM pessoa_intencoes pi WHERE pi.pessoa_id = p.id
+             ORDER BY pi.peso DESC, pi.ultimo_em DESC LIMIT 1) AS intencao_top,
+           (SELECT COUNT(*) FROM interesses i WHERE i.pessoa_id = p.id) AS temas_count,
+           p.indicado_por
       FROM pessoas p
   `).all(corte30, corte7);
 

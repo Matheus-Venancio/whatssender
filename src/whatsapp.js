@@ -11,7 +11,7 @@
 
 import { join } from 'node:path';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
-import { db, agora, setConfig, campanhaAtual, comCampanha, pastaDeAuth } from './db.js';
+import { db, agora, setConfig, getConfig, campanhaAtual, comCampanha, pastaDeAuth } from './db.js';
 import { porCampanha } from './porcampanha.js';
 import {
   upsertPessoa, upsertGrupo, vincularMembro,
@@ -23,6 +23,7 @@ import { analisarMensagem } from './risco.js';
 import { analisarSentimento, atualizarConversa } from './conversa.js';
 import { registrarExecutor, pausar as pausarFila } from './adicionar-grupo.js';
 import * as transmissao from './transmissao.js';
+import { atribuirPorMensagem } from './embaixadores.js';
 import { publicarPessoa, publicarGrupo, publicarAlerta, enfileirar, COLECOES } from './firestore.js';
 import * as nuvem from './nuvem.js';
 
@@ -54,6 +55,19 @@ const sessao = () => sessoes.atual();
 
 /** Estado do WhatsApp da campanha ativa. */
 export const estadoDoWhatsapp = () => sessao().estado;
+
+/**
+ * Resultado da importação da agenda, lido do banco.
+ *
+ * Fica fora da sessão de propósito: a importação acontece uma vez, no
+ * pareamento, e quem abre o painel horas depois precisa ver o que entrou —
+ * inclusive com o WhatsApp desconectado no momento da consulta.
+ */
+export const resumoDaAgenda = () => ({
+  naAgenda: db.prepare('SELECT COUNT(*) AS n FROM pessoas WHERE na_agenda = 1').get().n,
+  contatos: db.prepare("SELECT COUNT(*) AS n FROM pessoas WHERE origem = 'contato'").get().n,
+  importadaEm: Number(getConfig('agenda_importada_em', 0)) || null
+});
 export const sessoesAtivas = () => sessoes.todas()
   .map(([slug, s]) => ({ slug, status: s.estado.status, telefone: s.estado.telefone }));
 
@@ -384,6 +398,23 @@ function processarMensagemPrivada(mensagem, remoto) {
     'SELECT COUNT(*) AS n FROM mensagens WHERE pessoa_id = ? AND privada = 1'
   ).get(pessoaId).n === 0;
 
+  // Captação pelo WhatsApp: a pessoa abriu o link wa.me do embaixador e mandou a
+  // mensagem sugerida, que carrega o código de quem indicou. Só na PRIMEIRA
+  // mensagem dela — depois disso o código no texto não vale mais nada, senão
+  // qualquer um colaria o código de outro e mexeria na atribuição.
+  if (primeiraVez && !deMim && conteudo.texto) {
+    const indicou = atribuirPorMensagem(pessoaId, conteudo.texto, ts);
+    if (indicou) {
+      registrarEvento({
+        pessoaId,
+        tipo: 'contato_equipe',
+        descricao: `Chamou no WhatsApp pela indicação de ${indicou.nome}`,
+        ts
+      });
+      console.log(`[whatsapp:${campanhaAtual()}] captada por indicação de ${indicou.nome}`);
+    }
+  }
+
   // "SAIR" e equivalentes tiram a pessoa de qualquer disparo, na hora.
   //
   // A lei dá 48 horas para atender o descadastramento (Lei 9.504/97, art.
@@ -635,7 +666,26 @@ export function simularEventoDeGrupo(evento) {
   return processarParticipantes(evento);
 }
 
-export async function conectar({ parearCom = null } = {}) {
+/**
+ * Modos de conexão. A diferença não é técnica, é de propósito:
+ *
+ *   completo — a campanha vive aqui: grupos, conversas, alertas, atrito.
+ *   contatos — só a agenda entra. Nenhuma mensagem é lida nem guardada.
+ *
+ * O modo "contatos" existe porque puxar as conversas de um celular pessoal
+ * para pegar a lista de números é invasivo além da conta. Quem quer só a
+ * agenda não deveria entregar junto o histórico de tudo que conversou.
+ *
+ * Guardado no banco, não na memória: a reconexão automática chama conectar()
+ * sem argumentos, e sem isto uma queda de internet promoveria silenciosamente
+ * uma conexão de contatos para leitura completa.
+ */
+export const MODOS = ['completo', 'contatos'];
+export const modoAtual = () => (getConfig('whatsapp_modo', 'completo') === 'contatos' ? 'contatos' : 'completo');
+export const soContatos = () => modoAtual() === 'contatos';
+
+export async function conectar({ parearCom = null, modo = null } = {}) {
+  if (modo && MODOS.includes(modo)) setConfig('whatsapp_modo', modo);
   // O slug é capturado agora: os callbacks do Baileys chegam fora do contexto
   // do AsyncLocalStorage e precisam ser reancorados na campanha certa.
   const slug = campanhaAtual();
@@ -662,7 +712,10 @@ export async function conectar({ parearCom = null } = {}) {
 
   // Espelhar o histórico existente é opcional: num número novo da campanha vale
   // muito a pena; num número com anos de conversa, é despejo de dado alheio.
-  const espelharHistorico = process.env.SINCRONIZAR_HISTORICO !== 'false';
+  // No modo contatos o WhatsApp nem chega a mandar o histórico: pedir menos é
+  // melhor do que receber e descartar.
+  const apenasAgenda = soContatos();
+  const espelharHistorico = !apenasAgenda && process.env.SINCRONIZAR_HISTORICO !== 'false';
 
   // Contagem de QRs desta tentativa — ver a nota no emissor de QR abaixo.
   const MAX_QRS = Number(process.env.WHATSAPP_MAX_QRS || 3);
@@ -742,11 +795,19 @@ export async function conectar({ parearCom = null } = {}) {
     }
     if (novos) {
       const total = db.prepare("SELECT COUNT(*) AS n FROM pessoas WHERE na_agenda = 1").get().n;
+
+      // Guardado no banco, não só na memória: a importação acontece uma vez, no
+      // pareamento, e quem abre o painel depois precisa saber que ela ocorreu e
+      // quantos contatos entraram. Sem isso a tela fica igual antes e depois.
+      setConfig('agenda_total', String(total));
+      setConfig('agenda_importada_em', String(agora()));
+
       console.log(`[whatsapp:${slug}] agenda: ${novos} contato(s) atualizados (${total} salvos no celular)`);
       emitir('contatos', { atualizados: novos, naAgenda: total });
       agendarRecalculo();
     }
   };
+
 
   // O ouvinte de histórico fica SEMPRE ligado.
   //
@@ -760,10 +821,15 @@ export async function conectar({ parearCom = null } = {}) {
   // não se aproveitamos o que chega. Mesmo sem ela, o WhatsApp manda as
   // conversas recentes de cada chat — e é disso que sai a leitura de tom.
   sessao().sock.ev.on('messaging-history.set', aqui(({ messages = [], contacts = [], progress, isLatest }) => {
+    // Os contatos vêm no MESMO evento do histórico. No modo contatos ficamos
+    // com eles e descartamos as mensagens — é a linha que separa "quero sua
+    // agenda" de "quero ler tudo que você conversou".
     guardarContatos(contacts);
     const antes = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n;
-    for (const antiga of messages) {
-      try { processarMensagem(antiga); } catch { /* mensagem antiga em formato estranho */ }
+    if (!apenasAgenda) {
+      for (const antiga of messages) {
+        try { processarMensagem(antiga); } catch { /* mensagem antiga em formato estranho */ }
+      }
     }
     const importadas = db.prepare('SELECT COUNT(*) AS n FROM mensagens').get().n - antes;
     sessao().estado.historico = { progresso: progress ?? null, concluido: Boolean(isLatest) };
@@ -988,6 +1054,10 @@ export async function conectar({ parearCom = null } = {}) {
   }));
 
   sessao().sock.ev.on('messages.upsert', aqui(({ messages, type }) => {
+    // Modo contatos não lê mensagem nenhuma, nem as que chegam agora. Sem esta
+    // guarda, a conexão começaria respeitando a conversa e passaria a gravá-la
+    // assim que alguém escrevesse.
+    if (apenasAgenda) return;
     if (type !== 'notify' && type !== 'append') return;
     for (const mensagem of messages) {
       try { processarMensagem(mensagem); } catch (erro) {

@@ -181,6 +181,26 @@ CREATE TABLE IF NOT EXISTS temas_pessoa (
   PRIMARY KEY (pessoa_id, tema)
 );
 
+-- Embaixadores: quem faz captação em nome da campanha (a Luciana da Rede Lara
+-- Maria, a Lucilene, o Cadima). Cada um tem um código próprio, e é por ele que a
+-- pessoa captada fica atribuída a quem a trouxe.
+--
+-- POR QUE ESTE DESENHO: a captação acontece pelo lado de QUEM ENTRA — a pessoa
+-- abre o link/QR do embaixador e preenche o formulário, que já tem consentimento
+-- explícito. O sistema nunca lê a agenda nem as conversas do embaixador: essa
+-- gente não deu dado nenhum para a campanha, e a base é de dado pessoal com
+-- finalidade política.
+CREATE TABLE IF NOT EXISTS embaixadores (
+  id         INTEGER PRIMARY KEY,
+  codigo     TEXT UNIQUE NOT NULL,
+  nome       TEXT NOT NULL,
+  papel      TEXT,
+  telefone   TEXT,
+  ativo      INTEGER NOT NULL DEFAULT 1,
+  criado_em  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emb_codigo ON embaixadores(codigo);
+
 CREATE TABLE IF NOT EXISTS perfil (
   pessoa_id           INTEGER PRIMARY KEY REFERENCES pessoas(id) ON DELETE CASCADE,
   engajamento         REAL NOT NULL DEFAULT 0,
@@ -354,7 +374,25 @@ CREATE TABLE IF NOT EXISTS conversas (
     // Pediu para não receber mais. Exigência legal, não preferência: a pessoa
     // que se descadastra não pode voltar a receber disparo nenhum.
     ['pessoas', 'opt_out', 'INTEGER NOT NULL DEFAULT 0'],
-    ['pessoas', 'opt_out_em', 'INTEGER']
+    ['pessoas', 'opt_out_em', 'INTEGER'],
+    // Que grupo é da campanha e que pilar ele atende — ver src/grupos-campanha.js.
+    // O número âncora está em grupos de terceiros (curso, igreja, outra
+    // profissional); sem esta marcação a fila de adição os oferecia como destino
+    // e a recomendação do formulário caía no primeiro grupo por id.
+    ['grupos', 'tema', 'TEXT'],
+    ['grupos', 'da_campanha', 'INTEGER NOT NULL DEFAULT 0'],
+    // Decisão tomada à mão pela equipe: a reclassificação automática não mexe.
+    ['grupos', 'classificacao_manual', 'INTEGER NOT NULL DEFAULT 0'],
+    // Link de convite do grupo, em cache. O formulário público precisa dele no
+    // ato do cadastro, e pedir o código ao WhatsApp a cada envio é chamada de
+    // API por pessoa — caminho curto para rate limit no meio de uma campanha
+    // de anúncio.
+    ['grupos', 'link_convite', 'TEXT'],
+    ['grupos', 'link_convite_em', 'INTEGER'],
+    // Quem trouxe esta pessoa (embaixador). É o que permite medir a captação de
+    // cada aliada sem misturar a base de uma com a de outra.
+    ['pessoas', 'indicado_por', 'INTEGER'],
+    ['pessoas', 'indicado_em', 'INTEGER']
   ]) {
     if (!colunas(tabela).includes(coluna)) {
       banco.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${tipo}`);

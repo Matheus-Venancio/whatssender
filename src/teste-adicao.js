@@ -33,7 +33,7 @@ function limpar() {
 console.log('\nTeste da fila de adição a grupo\n');
 limpar();
 
-const grupoId = upsertGrupo({ jid: JID_GRUPO, nome: 'Grupo Teste Adição', criadoEm: agora() });
+const grupoId = upsertGrupo({ jid: JID_GRUPO, nome: 'Protegendo quem protege | Teste Adição', criadoEm: agora() });
 
 // 6 pessoas: 4 assinantes de SP, 1 já no grupo, 1 sem assinatura.
 const pessoas = [];
@@ -44,7 +44,7 @@ for (let i = 1; i <= 6; i++) {
     .run(`Pessoa ${i} Teste`, 'Campinas', i === 5 ? 'RJ' : 'SP', agora(), id);
   pessoas.push({ id, tel });
 }
-vincularMembro({ pessoaId: pessoas[5].id, grupoId, nomeGrupo: 'Grupo Teste Adição' });
+vincularMembro({ pessoaId: pessoas[5].id, grupoId, nomeGrupo: 'Protegendo quem protege | Teste Adição' });
 
 // ------------------------------------------------------------- elegibilidade
 console.log('1) Quem pode entrar na fila');
@@ -102,7 +102,7 @@ fila.registrarExecutor({
   enviarMensagem: async (jid, texto) => {
     convitesEnviados++;
     ok(texto.includes('chat.whatsapp.com/ABC123CONVITE'), 'convite traz o link do grupo');
-    ok(texto.includes('Grupo Teste Adição'), 'convite cita o nome do grupo');
+    ok(texto.includes('Protegendo quem protege | Teste Adição'), 'convite cita o nome do grupo');
     ok(texto.includes('assinou nosso abaixo-assinado'), 'convite explica por que a pessoa está sendo chamada');
     ok(texto.includes('ignorar esta mensagem'), 'convite dá saída educada (evita denúncia)');
     return true;
@@ -156,8 +156,15 @@ console.log('\n7) Janela de horário');
 fila.enfileirar({ grupoId, pessoaIds: [pessoas[0].id] });
 db.prepare("UPDATE fila_adicao SET situacao='pendente' WHERE grupo_id = ?").run(grupoId);
 
-fila.LIMITES.horaInicio = 3;
-fila.LIMITES.horaFim = 4;      // janela que certamente não é agora
+// A janela precisa ser calculada a partir de agora, não fixada. Com valores
+// fixos (era 3h–4h) este teste falhava de verdade se rodasse entre 3h e 4h da
+// manhã — e falhava justamente na hora em que ninguém está olhando o deploy.
+// A janela não pode cruzar a meia-noite: `impedimento()` compara
+// `hora < inicio || hora >= fim`, o que não funciona para intervalo invertido.
+const horaAgora = new Date().getHours();
+const inicioFalso = horaAgora >= 12 ? 1 : 13;   // sempre no outro turno do dia
+fila.LIMITES.horaInicio = inicioFalso;
+fila.LIMITES.horaFim = inicioFalso + 1;
 ok(/fora do horário/.test(fila.resumo(grupoId).estado.impedimento || ''),
   `fora da janela, a fila não anda: "${fila.resumo(grupoId).estado.impedimento}"`);
 

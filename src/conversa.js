@@ -361,7 +361,17 @@ export function sugerirRespostas(pessoaId) {
 }
 
 function urlCadastro() {
-  return process.env.URL_CADASTRO || `http://localhost:${process.env.PORT || 3333}/cadastro`;
+  // Ordem de prioridade, e ela importa: o link desta campanha (guardado na base
+  // dela) vence o padrão global do .env, porque `/formulario` sem slug redireciona
+  // para a PRIMEIRA campanha ativa — num servidor com vários candidatos isso
+  // mandaria o apoiador da Cláudia para o formulário de outro.
+  // O localhost fica por último: só serve na máquina da equipe, e era o valor
+  // que estava indo dentro de sugestão de resposta no WhatsApp.
+  const daCampanha = getConfig('url_cadastro', null);
+  if (daCampanha) return daCampanha;
+  const global = process.env.URL_CADASTRO?.trim();
+  if (global) return global;
+  return `http://localhost:${process.env.PORT || 3333}/cadastro`;
 }
 
 /** Guarda o resumo na tabela de conversas (usado pela lista da caixa de entrada). */

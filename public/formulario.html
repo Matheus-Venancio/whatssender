@@ -310,6 +310,13 @@
             </div>
           </label>
           <label class="pauta-card">
+            <input type="checkbox" name="pautas" value="protecao_digital">
+            <div class="pauta-box">
+              <span class="icone">📱</span>
+              <span class="rotulo">Proteção Digital</span>
+            </div>
+          </label>
+          <label class="pauta-card">
             <input type="checkbox" name="pautas" value="saude">
             <div class="pauta-box">
               <span class="icone">🧠</span>
@@ -435,6 +442,8 @@
 
   <script>
     const SLUG = location.pathname.split('/').filter(Boolean)[1] || '';
+    // Coletar dados: ?e=<codigo> diz qual embaixador trouxe esta pessoa.
+    const EMBAIXADOR = new URLSearchParams(location.search).get('e') || null;
     const form = document.getElementById('form-pautas');
     const caixaForm = document.getElementById('caixa-form');
     const erroMsg = document.getElementById('erro-msg');
@@ -460,6 +469,7 @@
         bairro: formData.get('bairro'),
         atuacao: formData.get('atuacao'),
         pautas: pautas,
+        embaixador: EMBAIXADOR,
         intencao: formData.get('intencao'),
         observacoes: formData.get('observacoes')
       };
@@ -477,8 +487,29 @@
 
         if (res.erro) throw new Error(res.erro);
 
-        const grupoNome = res.grupoRecomendado?.nome || 'Protegendo quem protege | Saúde';
+        // O nome do grupo NUNCA é chutado. Antes havia um padrão fixo
+        // ("Protegendo quem protege | Saúde") que aparecia mesmo quando o
+        // sistema não tinha recomendado grupo nenhum — a pessoa era convidada
+        // para um grupo que podia não ser o dela, com um botão apontando para
+        // "#". Sem recomendação ou sem link de convite, o card não aparece.
+        const grupo = res.grupoRecomendado || null;
+        const link = res.linkWhatsApp || null;
         const pautaFormatada = res.pautaPrincipal || 'Suas causas';
+
+        const cardGrupo = (grupo && link)
+          ? `<div class="card-grupo-recomendado">
+              <h3>💬 Grupo Ideal Recomendado para Você:</h3>
+              <p>Com base na sua luta principal (<b>${pautaFormatada}</b>), conectamos você ao grupo temático ideal no WhatsApp:</p>
+              <h4 style="margin:0 0 10px;font-size:17px;color:#065f46">📌 ${grupo.nome}</h4>
+              <a href="${link}" class="btn-whatsapp" target="_blank" rel="noopener">
+                💬 Entrar no Grupo do WhatsApp Agora
+              </a>
+            </div>`
+          : `<div class="card-grupo-recomendado">
+              <h3>💬 Já estamos com você</h3>
+              <p>Sua ficha foi registrada. Nossa equipe vai te chamar no WhatsApp com o
+                 convite do grupo certo para as suas pautas — é rápido.</p>
+            </div>`;
 
         caixaForm.innerHTML = `
           <div class="sucesso-caixa">
@@ -486,14 +517,7 @@
             <h2>Obrigado por somar com a gente, ${res.nome || payload.nome}!</h2>
             <p>Suas pautas (<b>${res.pautasFormatadas || 'Causas Selecionadas'}</b>) foram registradas com sucesso na base de apoio da Dra. Cláudia Camargo!</p>
 
-            <div class="card-grupo-recomendado">
-              <h3>💬 Grupo Ideal Recomendado para Você:</h3>
-              <p>Com base na sua luta principal (<b>${pautaFormatada}</b>), conectamos você ao grupo temático ideal no WhatsApp:</p>
-              <h4 style="margin:0 0 10px;font-size:17px;color:#065f46">📌 ${grupoNome}</h4>
-              <a href="${res.linkWhatsApp || '#'}" class="btn-whatsapp" target="_blank">
-                💬 Entrar no Grupo do WhatsApp Agora
-              </a>
-            </div>
+            ${cardGrupo}
 
             <p style="font-size:12.5px;color:#64748b;margin-top:16px">
               Caso já esteja em nossos grupos, sua ficha foi automaticamente atualizada. Obrigado!

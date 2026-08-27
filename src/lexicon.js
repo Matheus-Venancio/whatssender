@@ -49,6 +49,24 @@ export const TEMAS = {
       'praca para as criancas', 'atividade para jovens', 'estagio', 'jovem aprendiz', 'autismo',
       'tea', 'crianca atipica']
   },
+  // A bandeira mais forte da campanha tem tema próprio de propósito. Diluída em
+  // "infância" ou "segurança", o painel não conseguia responder quanta gente
+  // fala especificamente de criança no ambiente digital — que é o recorte que
+  // diferencia a candidatura e sustenta o projeto de lei.
+  protecao_digital: {
+    rotulo: 'Proteção digital da infância',
+    cor: '#4f46e5',
+    termos: ['proteja digital', 'protecao digital', 'seguranca digital', 'internet segura',
+      'cyberbullying', 'ciberbullying', 'cyber bullying', 'bullying virtual',
+      'aliciamento', 'aliciador', 'aliciada', 'grooming', 'predador online', 'predador virtual',
+      'pedofilia na internet', 'pedofilia online', 'pornografia infantil', 'nudes', 'sexting',
+      'jogo online', 'jogos online', 'roblox', 'free fire', 'discord', 'tiktok', 'kwai',
+      'tempo de tela', 'vicio em tela', 'vicio em celular', 'celular na escola',
+      'controle parental', 'perfil falso', 'chat com estranho', 'estranho no chat',
+      'exposicao de crianca', 'exposicao de menor', 'imagem do meu filho',
+      'foto do meu filho', 'internet das criancas', 'criancas na internet',
+      'monitorar o celular', 'idade minima para rede social']
+  },
   idoso: {
     rotulo: 'Pessoa idosa',
     cor: '#14b8a6',

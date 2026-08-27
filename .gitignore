@@ -33,4 +33,7 @@ data/.instancia.lock
 
 # Pastas de teste isoladas.
 data-teste-*/
+# Backups de base e artefatos do mount — nunca versionar (contêm dado pessoal).
+*.db.backup-*
+.fuse_hidden*
 data-restaura/

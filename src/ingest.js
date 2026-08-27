@@ -1,6 +1,8 @@
-import { db, agora } from './db.js';
+import { db, agora, getConfig } from './db.js';
 import { TEMAS, INTENCOES, classificarTexto } from './lexicon.js';
 import { DDD_UF } from './leads.js';
+import { classificarGrupo, recomendarGrupo } from './grupos-campanha.js';
+import { registrarIndicacao } from './embaixadores.js';
 
 /** "5519999998888@s.whatsapp.net" -> "5519999998888" */
 export function telefoneDoJid(jid) {
@@ -49,15 +51,50 @@ export function upsertPessoa({ jid, nomeWa = null, origem = 'grupo', ts = agora(
 }
 
 export function upsertGrupo({ jid, nome, descricao = null, criadoEm = agora() }) {
-  const existente = db.prepare('SELECT id FROM grupos WHERE wa_jid = ?').get(jid);
+  const existente = db.prepare(
+    'SELECT id, classificacao_manual FROM grupos WHERE wa_jid = ?'
+  ).get(jid);
+
   if (existente) {
     db.prepare('UPDATE grupos SET nome = ?, descricao = COALESCE(?, descricao) WHERE id = ?')
       .run(nome, descricao, existente.id);
+    // Renomear grupo no meio da campanha é rotina ("| Saúde" vira "Salve a
+    // Escola"). Reclassifica no ato — a menos que a equipe tenha decidido à mão.
+    if (!existente.classificacao_manual) classificarGrupoNaBase(existente.id);
     return existente.id;
   }
+
   const r = db.prepare('INSERT INTO grupos (wa_jid, nome, descricao, criado_em) VALUES (?, ?, ?, ?)')
     .run(jid, nome, descricao, criadoEm);
-  return Number(r.lastInsertRowid);
+  const id = Number(r.lastInsertRowid);
+  classificarGrupoNaBase(id);
+  return id;
+}
+
+/**
+ * Grava `tema` e `da_campanha` a partir do nome e da descrição já salvos.
+ * Lê da base de propósito: na atualização a descrição pode não ter vindo no
+ * payload, e é ela que desempata casos como o grupo geral da campanha.
+ */
+export function classificarGrupoNaBase(grupoId, { manual = false } = {}) {
+  const g = db.prepare('SELECT nome, descricao FROM grupos WHERE id = ?').get(grupoId);
+  if (!g) return null;
+  // O nome da candidata é uma das assinaturas de grupo da campanha ("Amigos,
+  // Amigas da Cláudia Camargo"). Resolve na mesma ordem que conversa.js, para
+  // não depender de o .env estar carregado em script de linha de comando.
+  const candidata = process.env.CANDIDATA?.trim() || getConfig('candidata', null);
+  const { daCampanha, tema } = classificarGrupo(g.nome, g.descricao, { candidata });
+  db.prepare('UPDATE grupos SET tema = ?, da_campanha = ?, classificacao_manual = ? WHERE id = ?')
+    .run(tema, daCampanha ? 1 : 0, manual ? 1 : 0, grupoId);
+  return { id: grupoId, nome: g.nome, daCampanha, tema };
+}
+
+/** Decisão da equipe. A reclassificação automática não mexe mais neste grupo. */
+export function definirGrupoManualmente(grupoId, { daCampanha, tema = null }) {
+  db.prepare(
+    'UPDATE grupos SET da_campanha = ?, tema = ?, classificacao_manual = 1 WHERE id = ?'
+  ).run(daCampanha ? 1 : 0, tema || null, grupoId);
+  return db.prepare('SELECT id, nome, tema, da_campanha, classificacao_manual FROM grupos WHERE id = ?').get(grupoId);
 }
 
 export function vincularMembro({ pessoaId, grupoId, entrouEm = agora(), admin = false, nomeGrupo = null }) {
@@ -161,7 +198,7 @@ export function retratoDaPessoa(pessoaId) {
 // falhar no node:sqlite — a pessoa entrava pelo INSERT e ficava sem nome e sem
 // cadastro_em, isto é, invisível para o disparo. O formulário sempre manda os
 // três; quem chama pela API, nem sempre.
-export function salvarCadastro({ telefone, nome = null, cidade = null, bairro = null, atuacao = null, email = null, observacoes = null, ts = agora() }) {
+export function salvarCadastro({ telefone, nome = null, cidade = null, bairro = null, atuacao = null, email = null, observacoes = null, embaixador = null, ts = agora() }) {
   const digitos = String(telefone || '').replace(/\D/g, '');
   if (digitos.length < 10) throw new Error('Telefone inválido');
   const completo = digitos.startsWith('55') ? digitos : `55${digitos}`;
@@ -186,14 +223,25 @@ export function salvarCadastro({ telefone, nome = null, cidade = null, bairro = 
      WHERE id = ?`
   ).run(nome, cidade, uf, bairro, atuacao, email, observacoes, ts, pessoa.id);
 
+  // Atribuição ao embaixador que trouxe a pessoa (link/QR próprio dele).
+  const indicadaPor = registrarIndicacao(pessoa.id, embaixador, ts);
+  if (indicadaPor && novo) {
+    db.prepare("UPDATE pessoas SET origem = 'indicacao' WHERE id = ?").run(pessoa.id);
+  }
+
   registrarEvento({
     pessoaId: pessoa.id,
     tipo: 'assinou',
-    descricao: `Assinou o abaixo-assinado — ${cidade}${atuacao ? ` · ${atuacao}` : ''}`,
+    descricao: `Assinou o abaixo-assinado — ${cidade}${atuacao ? ` · ${atuacao}` : ''}` +
+      (indicadaPor ? ` · indicada por ${indicadaPor.nome}` : ''),
     ts
   });
 
-  return { pessoaId: pessoa.id, novo };
+  return {
+    pessoaId: pessoa.id,
+    novo,
+    indicadaPor: indicadaPor ? { nome: indicadaPor.nome, papel: indicadaPor.papel } : null
+  };
 }
 
 /**
@@ -201,7 +249,7 @@ export function salvarCadastro({ telefone, nome = null, cidade = null, bairro = 
  */
 export function salvarFormularioPautas({
   nome, telefone, cidade, bairro = null, atuacao, email = null,
-  pautas = [], intencao = 'apoiador', observacoes = null, ts = agora()
+  pautas = [], intencao = 'apoiador', observacoes = null, embaixador = null, ts = agora()
 }) {
   const digitos = String(telefone || '').replace(/\D/g, '');
   if (digitos.length < 10) throw new Error('Telefone inválido (mínimo 10 dígitos com DDD)');
@@ -246,8 +294,15 @@ export function salvarFormularioPautas({
     `).run(pessoa.id, intencao, INTENCOES[intencao].peso, ts);
   }
 
+  // Atribuição ao embaixador que trouxe a pessoa (link/QR próprio dele).
+  const indicadaPor = registrarIndicacao(pessoa.id, embaixador, ts);
+  if (indicadaPor && novo) {
+    db.prepare("UPDATE pessoas SET origem = 'indicacao' WHERE id = ?").run(pessoa.id);
+  }
+
   const nomesPautas = listaPautas.map(t => TEMAS[t]?.rotulo || t).join(', ');
-  const descEv = `Preencheu Formulário de Pautas ${nomesPautas ? `— Luta por: ${nomesPautas}` : ''}`;
+  const descEv = `Preencheu Formulário de Pautas ${nomesPautas ? `— Luta por: ${nomesPautas}` : ''}` +
+    (indicadaPor ? ` · indicada por ${indicadaPor.nome}` : '');
   registrarEvento({
     pessoaId: pessoa.id,
     tipo: 'pesquisa_pautas',
@@ -256,17 +311,15 @@ export function salvarFormularioPautas({
     ts
   });
 
-  const gruposAtivos = db.prepare('SELECT id, nome, descricao FROM grupos WHERE ativo = 1').all();
-  let grupoRecomendado = null;
-  if (gruposAtivos.length > 0) {
-    const pautaPrincipal = listaPautas[0];
-    const rotuloPrincipal = pautaPrincipal ? (TEMAS[pautaPrincipal]?.rotulo || '') : '';
-    let match = gruposAtivos.find(g =>
-      rotuloPrincipal && g.nome.toLowerCase().includes(rotuloPrincipal.toLowerCase())
-    );
-    if (!match) match = gruposAtivos[0];
-    grupoRecomendado = match;
-  }
+  // Só grupo da campanha entra na recomendação, e o casamento é por `tema`.
+  // Antes era por substring do rótulo dentro do nome do grupo, com fallback em
+  // `gruposAtivos[0]` — que nesta base é um grupo de terceiro. Renomear os
+  // grupos quebrava a recomendação sem dar erro nenhum.
+  const gruposDaCampanha = db.prepare(`
+    SELECT id, nome, descricao, tema, da_campanha, wa_jid, link_convite
+      FROM grupos WHERE ativo = 1 AND da_campanha = 1 ORDER BY id
+  `).all();
+  const grupoRecomendado = recomendarGrupo(gruposDaCampanha, listaPautas);
 
   return {
     pessoaId: pessoa.id,
@@ -274,7 +327,8 @@ export function salvarFormularioPautas({
     novo,
     pautaPrincipal: listaPautas[0] ? (TEMAS[listaPautas[0]]?.rotulo || listaPautas[0]) : 'Comunidade',
     pautasFormatadas: nomesPautas,
-    grupoRecomendado
+    grupoRecomendado,
+    indicadaPor: indicadaPor ? { nome: indicadaPor.nome, papel: indicadaPor.papel } : null
   };
 }
 

@@ -203,14 +203,18 @@ export function obterPessoa(id) {
 
 export function listarGrupos() {
   return db.prepare(`
-    SELECT g.id, g.nome, g.descricao, g.criado_em,
+    SELECT g.id, g.nome, g.descricao, g.criado_em, g.tema, g.da_campanha, g.classificacao_manual,
            (SELECT COUNT(*) FROM membros m WHERE m.grupo_id = g.id AND m.saiu_em IS NULL) AS membros,
            (SELECT COUNT(*) FROM mensagens m WHERE m.grupo_id = g.id) AS mensagens,
            (SELECT COUNT(*) FROM mensagens m WHERE m.grupo_id = g.id AND m.ts >= ?) AS mensagens_7d,
            (SELECT COUNT(DISTINCT m.pessoa_id) FROM mensagens m WHERE m.grupo_id = g.id AND m.ts >= ?) AS ativos_7d,
            (SELECT MAX(m.ts) FROM mensagens m WHERE m.grupo_id = g.id) AS ultima_msg
-      FROM grupos g WHERE g.ativo = 1 ORDER BY g.nome
-  `).all(Date.now() - 7 * DIA, Date.now() - 7 * DIA);
+      FROM grupos g WHERE g.ativo = 1 ORDER BY g.da_campanha DESC, g.nome
+  `).all(Date.now() - 7 * DIA, Date.now() - 7 * DIA).map((g) => ({
+    ...g,
+    da_campanha: Number(g.da_campanha) === 1,
+    tema_rotulo: g.tema ? (TEMAS[g.tema]?.rotulo ?? g.tema) : null
+  }));
 }
 
 export function listarAbaixos() {
@@ -485,6 +489,8 @@ export function panorama() {
       db.prepare('SELECT AVG(completude) AS m FROM perfil').get().m || 0
     ),
     assinaturas: contar('SELECT COUNT(*) AS n FROM assinaturas'),
+    // Coletar dados: quantas pessoas vieram por indicação de embaixador.
+    captadas_indicacao: contar('SELECT COUNT(*) AS n FROM pessoas WHERE indicado_por IS NOT NULL'),
     na_agenda: contar('SELECT COUNT(*) AS n FROM pessoas WHERE na_agenda = 1'),
     provaveis: contar("SELECT COUNT(*) AS n FROM perfil WHERE faixa_apoio = 'Provável apoiador'"),
     // Quem tem chance de apoiar e ainda está fora dos grupos: a fila natural

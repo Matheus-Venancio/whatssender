@@ -134,8 +134,24 @@ export function elegiveis({ grupoId, filtros = {} }) {
 }
 
 export function enfileirar({ grupoId, pessoaIds = null, filtros = {}, limite = null }) {
-  const grupo = db.prepare('SELECT id, nome FROM grupos WHERE id = ?').get(grupoId);
+  const grupo = db.prepare(
+    'SELECT id, nome, da_campanha FROM grupos WHERE id = ?'
+  ).get(grupoId);
   if (!grupo) throw new Error('Grupo não encontrado');
+
+  // TRAVA: o telefone da campanha também está em grupos de terceiros (curso,
+  // igreja, outra profissional), e eles aparecem na mesma lista. Despejar
+  // assinantes do abaixo-assinado num grupo desses é dano reputacional e uso
+  // indevido de dado pessoal — não é erro para descobrir depois de acontecer.
+  // Para liberar de propósito, marque o grupo como da campanha
+  // (`npm run grupos -- --marcar <id>`).
+  if (!grupo.da_campanha) {
+    throw new Error(
+      `"${grupo.nome}" não está marcado como grupo da campanha. ` +
+      'Nenhuma pessoa foi enfileirada. Marque com `npm run grupos -- --marcar ' +
+      `${grupo.id}` + '` se ele for realmente da campanha.'
+    );
+  }
 
   let lista = pessoaIds?.length
     ? elegiveis({ grupoId, filtros: {} }).filter((p) => pessoaIds.includes(p.id))
@@ -317,6 +333,47 @@ async function processar(item) {
   };
   marcar(item, 'falhou', null, motivos[status] || `resposta ${status || 'desconhecida'}`);
   registrarFalha(`status ${status}`);
+}
+
+// Uma semana. O link de convite do WhatsApp não expira sozinho, mas pode ser
+// revogado pelo admin do grupo — revalidar de vez em quando evita distribuir
+// um link morto no formulário sem ninguém perceber.
+const VALIDADE_DO_CONVITE = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Link de convite do grupo, com cache na própria linha do grupo.
+ *
+ * Usado pelo formulário público: sem ele, o botão "Entrar no Grupo do WhatsApp"
+ * da tela de sucesso apontava para "#" — a pessoa acabava de se cadastrar, via
+ * o convite e não ia a lugar nenhum. Devolve null quando o WhatsApp está
+ * desconectado e não há link em cache; quem chama decide o que mostrar.
+ */
+export async function linkDeConvite(grupoId, { forcar = false } = {}) {
+  const grupo = db.prepare(
+    'SELECT id, wa_jid, link_convite, link_convite_em FROM grupos WHERE id = ?'
+  ).get(grupoId);
+  if (!grupo?.wa_jid) return null;
+
+  const fresco = grupo.link_convite &&
+    agora() - Number(grupo.link_convite_em || 0) < VALIDADE_DO_CONVITE;
+  if (fresco && !forcar) return grupo.link_convite;
+
+  const fila = filas.atual();
+  if (!fila.estado.ligada || !fila.executor) return grupo.link_convite || null;
+
+  let codigo = null;
+  try {
+    codigo = await fila.executor.obterConvite(grupo.wa_jid);
+  } catch {
+    // Sem conexão ou sem permissão de admin no grupo: devolve o que já tinha.
+    return grupo.link_convite || null;
+  }
+  if (!codigo) return grupo.link_convite || null;
+
+  const link = String(codigo).startsWith('http') ? codigo : `https://chat.whatsapp.com/${codigo}`;
+  db.prepare('UPDATE grupos SET link_convite = ?, link_convite_em = ? WHERE id = ?')
+    .run(link, agora(), grupo.id);
+  return link;
 }
 
 function textoDoConvite(item, codigo) {

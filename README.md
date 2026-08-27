@@ -125,6 +125,26 @@ Os três formulários do Meta Lead Ads já estão importados:
 **226 assinaturas → 204 pessoas**: 22 pessoas assinaram mais de um. Elas são as mais
 quentes da base e o sistema já as trata assim (os temas somam).
 
+### Quando o Proteja Digital virar formulário de anúncio
+
+`form_id` do Meta só existe depois do formulário publicado, então o mapa `ABAIXOS`
+(em `src/leads.js`) não pode ter a entrada dele antes da hora. Até lá, o
+importador **deduz** bandeira e temas pelo nome do formulário
+(`PISTAS_DE_ABAIXO`): um formulário chamado "Proteja Digital: crianças seguras na
+internet" já entra com `protecao_digital`, `infancia_juventude` e `seguranca` — sem
+isso, os leads da bandeira mais forte da campanha chegariam com `temas: []`, ou
+seja, sem interesse registrado, sem segmentação e sem recomendação de grupo.
+
+Assim que o formulário estiver no ar, registre o `form_id` real em `ABAIXOS` (ele
+aparece na coluna `form_id` do CSV, no formato `f:123…`): a chave fica estável
+mesmo se o nome do anúncio mudar depois.
+
+`protecao_digital` é um tema próprio no `lexicon.js`, e não um pedaço de
+"infância". Diluído lá, o painel não conseguia responder quanta gente fala
+especificamente de criança no ambiente digital — que é o recorte que sustenta o
+projeto de lei. Também é a nova opção **📱 Proteção Digital** no formulário de
+pautas.
+
 ### Importar novos leads
 
 O Meta exporta CSV pelo Gerenciador de Anúncios. Jogue os arquivos em `data/leads/` e:
@@ -361,6 +381,44 @@ Evolution API, Z-API ou qualquer outra ferramenta bate no mesmo muro. Não exist
 **O que dá para fazer:** um clique enfileira as 100 pessoas, e o sistema adiciona
 sozinho, devagar, ao longo de horas ou dias. Você não fica olhando.
 
+### Antes de tudo: quais grupos são da campanha
+
+O Baileys lista **todos** os grupos do telefone âncora — inclusive os que não têm
+nada a ver com a campanha (curso, igreja, grupo de outra profissional). Nesta base
+são 7 de 12. Enquanto eles não estiverem separados, dois estragos ficam à espera
+de um clique distraído:
+
+- a fila de adição oferece esses grupos como destino, e assinante de
+  abaixo-assinado acaba dentro do grupo de terceiro — dano de reputação e uso
+  indevido de dado pessoal;
+- a recomendação de grupo do formulário caía em "o primeiro grupo por id", que
+  aqui é um grupo externo.
+
+Cada grupo tem agora `da_campanha` (é nosso ou não) e `tema` (qual pilar atende,
+usando as mesmas chaves de `lexicon.js`). Quem classifica é o **nome** do grupo,
+não a descrição: o nome é o que a equipe padroniza (`Protegendo quem protege |
+Educação`), enquanto a descrição do grupo geral fala de crianças e o faria
+competir com o grupo do pilar, deixando a campanha sem destino para quem não casa
+com nenhum tema.
+
+```bash
+npm run grupos                      # mostra a situação (não altera nada)
+npm run grupos -- --aplicar         # (re)classifica pelo nome
+npm run grupos -- --marcar 12       # "este é da campanha", decisão da equipe
+npm run grupos -- --marcar 12 --tema educacao
+npm run grupos -- --desmarcar 1     # "este NÃO é da campanha"
+```
+
+Renomear um grupo no WhatsApp reclassifica sozinho na próxima sincronização
+(`Protegendo quem protege | Saúde` → `Salve a Escola` continua achando o tema).
+O que foi marcado à mão (✋) a automação não desfaz.
+
+**Um único grupo da campanha deve ficar sem tema**: é o grupo geral, destino de
+quem não casa com nenhum pilar. Com dois sem tema, o `npm run grupos` avisa.
+
+`enfileirar()` **recusa** grupo não marcado, com erro explicando o que fazer. É
+trava de propósito: melhor a fila reclamar do que descobrir depois.
+
 ### Como usar
 
 Aba **Grupos** → botão **➕ Adicionar** no grupo desejado. Escolha o filtro
@@ -443,6 +501,157 @@ quem estava na base e não aparece mais na lista do grupo gera alerta.
 
 ---
 
+## 8. Coletar dados — captação por embaixador
+
+A base tem mais de mil pessoas, mas só ~148 estão em grupo da campanha. A Luciana
+(Rede Lara Maria), a Lucilene e o Cadima têm alcance real e querem ajudar a mapear
+apoiador. Esta é a peça que transforma esse alcance em base própria da campanha.
+
+**Como funciona:** cada embaixador ganha um código, um link e um QR Code próprios.
+Ele divulga na rede dele; quem quiser entrar abre o link, preenche o formulário
+(que já pede consentimento) e cai na base da Cláudia **já atribuído a quem
+trouxe**, com o potencial de apoio calculado.
+
+```bash
+npm run embaixadores                                   # rendimento de cada um
+npm run embaixadores -- --criar "Luciana" --papel "Rede Lara Maria"
+npm run embaixadores -- --links                        # link e QR de cada um
+npm run embaixadores -- --captadas 1                   # quem ela trouxe, por propensão
+npm run embaixadores -- --desativar 3
+```
+
+No painel: aba **📡 Coletar dados** — cria embaixador, copia links, mostra QR e
+acompanha o rendimento de cada um.
+
+### Os QR desta tela NÃO conectam WhatsApp
+
+Este é o erro que aparece primeiro, e não é bug: lido em **WhatsApp →
+Dispositivos conectados**, o QR de captação devolve **"QR code inválido"**.
+
+São dois tipos de QR completamente diferentes, e o sistema tem os dois:
+
+| QR | Onde fica | O que é | Como se lê |
+|---|---|---|---|
+| **Pareamento** | aba 🔌 WhatsApp | payload do próprio WhatsApp; conecta **o número da campanha** ao sistema | WhatsApp → Dispositivos conectados |
+| **Captação** | aba 📡 Coletar dados | um **endereço** (formulário ou conversa) | câmera do celular |
+
+O leitor de "Dispositivos conectados" só aceita o payload de pareamento — para ele,
+qualquer endereço é inválido. Use a câmera do celular (ou a câmera dentro de uma
+conversa do WhatsApp). O painel avisa isso em cima da tela.
+
+E vale repetir: o QR de pareamento conecta **o número da campanha**, nunca o
+celular da aliada. Não existe fluxo em que a Luciana pareia o WhatsApp dela — é
+justamente o que este recurso evita.
+
+### Dois modos de captação por embaixador
+
+| Modo | Link | Serve para |
+|---|---|---|
+| 📋 **Formulário** | `/formulario/<slug>?e=<código>` | dado rico: cidade, atuação, pautas — e já recomenda o grupo certo |
+| 💬 **WhatsApp** | `wa.me/<número da campanha>?text=…(indicação: código)` | atrito zero; a conversa nasce com **a pessoa** chamando a campanha |
+
+O modo WhatsApp é o que fica mais perto do que se imagina ao ouvir "captar pelo
+WhatsApp", e é legítimo porque **quem inicia o contato é a pessoa** — o único
+formato em que abordar por WhatsApp não é disparo a lista de terceiro. A mensagem
+sugerida carrega o código de quem indicou, e o `whatsapp.js` atribui na hora que a
+primeira mensagem chega.
+
+A atribuição por mensagem vale **só na primeira**: depois disso, colar o código de
+outro embaixador não muda nada — senão qualquer um mexeria na atribuição alheia.
+
+### Kit de divulgação
+
+O gargalo da captação não é o link — é a pergunta *"o que eu escrevo?"*. A Luciana
+tem alcance, boa vontade e nenhum texto pronto, e cada dia sem postar é alcance que
+não virou base.
+
+Botão **✉️ Kit de divulgação** no cartão de cada embaixador: cinco peças prontas
+(story/status, grupo de WhatsApp, mensagem individual, legenda de post, fala de 20
+segundos em evento com o QR na mão), cada uma com o link dela já embutido e um
+botão de copiar. Mais uma peça de WhatsApp quando há número conectado.
+
+Os textos são escritos **na voz da embaixadora**, não na da campanha — é o nome
+dela que dá credibilidade, e texto de campanha na boca dela soa a panfleto. A fala
+de evento é a única sem link no corpo, de propósito: é roteiro falado apontando
+para o QR impresso.
+
+O kit sai junto com as regras que ela precisa saber: não prometer nada em nome da
+candidata, não citar caso real nem nome de vítima, oferecer saída a quem não quer,
+e não copiar a agenda de ninguém. Nenhuma peça cita número de urna — número errado
+em peça divulgada não se recolhe, e quem confirma isso é o jurídico.
+
+O kit é recusado enquanto o endereço público não estiver configurado: texto com
+link `localhost` mandado para a aliada é pior que texto nenhum.
+
+### Se os links saírem com localhost
+
+O painel roda em `localhost:3333` na máquina da equipe, e um link
+`http://localhost:3333/formulario/...` **não abre no celular de ninguém**. O
+endereço público vem do servidor (`base_publica` em `/api/config`), lido da config
+`url_cadastro` da campanha ou de `URL_CADASTRO` no `.env`. Enquanto não estiver
+configurado, o painel e o `npm run embaixadores` avisam em vez de entregar link
+quebrado:
+
+```bash
+# no .env, e reinicie o servidor
+URL_CADASTRO=https://SEU-DOMINIO/formulario
+```
+
+O relatório não mostra só volume, porque volume engana: 200 contatos frios não
+valem 20 prováveis apoiadores. Por isso vem a quebra por faixa de potencial de
+apoio, a propensão média e quantos já entraram em grupo da campanha — que é o
+passo em que a captação vira audiência de verdade.
+
+**A primeira atribuição vale.** Se a pessoa voltar depois por outro link, ela
+continua contando para quem a captou primeiro; senão o último clique roubaria o
+crédito e o relatório viraria ficção.
+
+### O que este recurso NÃO faz, de propósito
+
+Ler a agenda de contatos ou as conversas do embaixador. Pareado por QR Code, o
+WhatsApp entrega as duas coisas, e é tentador — resolveria a base num dia. Não dá
+para fazer:
+
+- as pessoas da agenda da Luciana **nunca deram dado nenhum à campanha**. Entrar
+  numa base política com finalidade de abordagem exige base legal, e não há
+  nenhuma aqui (LGPD art. 7 e 11 — preferência política é dado sensível);
+- a Luciana pode consentir pela conta **dela**, nunca pelas centenas de pessoas
+  que escreveram para ela. Conversa privada é dado de terceiro;
+- a Rede Lara Maria é rede de **mães de vítimas**. Estar naquela lista já revela
+  dado sensível. Se vazar que a lista virou base de campanha, o estrago cai na
+  Luciana e na Lucilene — que são o ativo de credibilidade da candidatura;
+- operacionalmente é o caminho mais curto para *"quem é você, onde conseguiu meu
+  número"* — o sinal crítico que o `risco.js` já monitora — e para a denúncia por
+  disparo em massa a lista de terceiro.
+
+A captação por link/QR chega no mesmo lugar (base própria, atribuída, com
+potencial de apoio calculado) sem nenhum desses riscos. O `teste:coleta` tem um
+bloco que verifica que essas funções de extração **não existem** no módulo.
+
+### Potencial de apoio de quem acaba de chegar
+
+O motor de propensão (`scoring.js`) foi feito para quem a campanha já observa nos
+grupos: mensagem, conversa privada, agenda. Quem chega só pelo formulário tinha
+apenas dois sinais (tema de interesse + formulário preenchido), pontuava 17 e caía
+em "Contato frio" — ou seja, a fila de tratamento da captação nascia vazia.
+
+Três sinais que já estavam na base e ninguém lia entraram na conta:
+
+| Sinal | Peso | Por quê |
+|---|---:|---|
+| Intenção declarada | 22 | "coordeno a associação", "quero ser voluntária" — o mais forte de quem ainda não conversou. Escala pelo peso do lexicon: liderança (4) vale mais que demanda (2) |
+| Veio por indicação | 14 | confiança emprestada de quem trouxe; converte muito melhor que clique em anúncio |
+| Marcou várias pautas | 6 cada | leu o formulário em vez de só enviar |
+
+Quem se declara liderança e vem por indicação sai de 17 para 57 — de "Contato
+frio" para "Possível apoiador". Quem não declarou nada continua nos mesmos 17: os
+pesos novos não inflam a régua de quem não deu sinal, e há teste garantindo isso.
+
+Atrito registrado continua tirando a pessoa da lista, por mais sinais que ela
+tenha.
+
+---
+
 ## Testes
 
 ```bash
@@ -460,6 +669,18 @@ npm run teste
   texto do convite e a parada automática após erros seguidos.
 - **`teste:conversa`** (31 verificações) — sentimento, intenção, sugestões para conversa hostil/positiva/pedido de ajuda, pessoa sem nome, e a caixa de entrada (contadores e filtros).
 - **`teste:risco`** (37 verificações) — 14 frases que precisam virar alerta, 12 frases normais que não podem, prioridade entre sinais, deduplicação, conflito coletivo e o que chega no painel.
+- **`teste:coleta`** (61 verificações) — código próprio e não adivinhável por embaixador,
+  atribuição de quem trouxe quem, primeira atribuição prevalecendo sobre a segunda,
+  embaixador desativado que para de atribuir, os três sinais novos de potencial de apoio
+  com guarda de regressão contra inflação da régua, o relatório de captação, e a
+  verificação de que não existe função de ler agenda ou conversa de terceiro. Cobre
+  também o modo WhatsApp: link wa.me, extração do código da mensagem, atribuição na
+  primeira mensagem e a recusa de mudar atribuição numa mensagem posterior.
+- **`teste:grupos`** (49 verificações) — reconhecimento de grupo da campanha contra
+  os nomes reais desta base (inclusive o typo "Criaças"), tema pelo nome e não pela
+  descrição, recomendação por pauta com queda no grupo geral, a trava que recusa
+  enfileirar em grupo de terceiro, reclassificação ao renomear, decisão manual que
+  a automação não desfaz, e a dedução de tema/bandeira de abaixo-assinado novo.
 - **`teste:alertas`** (22 verificações) — injeta os mesmos eventos que o Baileys entrega e
   confere entrada, saída voluntária, remoção por admin, idempotência, publicação no
   Firestore e o que o painel mostra. Cria um grupo temporário e apaga tudo no fim.
@@ -477,6 +698,10 @@ src/
   ingest.js            escrita normalizada + alertas
   repo.js              consultas do painel
   firestore.js         ponte com o Firebase (outbox, lotes, documentos)
+  embaixadores.js      ⭐ coletar dados: captação atribuída por embaixador
+  gerir-embaixadores.js    CLI da captação (npm run embaixadores)
+  grupos-campanha.js   ⭐ que grupo é da campanha e que pilar ele atende
+  classificar-grupos.js    CLI da classificação (npm run grupos)
   risco.js             ⭐ dicionário de atrito — quando a conversa azeda
   conversa.js          ⭐ sentimento, leitura da conversa e sugestões de resposta
   contas.js            ⭐ campanhas, usuários, sessões e permissões
@@ -506,6 +731,8 @@ data/leads/*.csv       exports do Meta (não versionados)
 | `npm run firebase:sync` | envia tudo para o Firestore |
 | `npm run firebase:previa` | mostra o que subiria, sem enviar |
 | `npm run riscos` | reavalia o histórico com o dicionário de atrito atual |
+| `npm run grupos` | mostra/classifica quais grupos são da campanha (`-- --aplicar` grava) |
+| `npm run embaixadores` | captação por embaixador: rendimento, links e QR (`-- --criar "Nome"`) |
 | `npm run configurar` | cria campanhas e acessos (`-- --listar` mostra tudo) |
 | `npm run filtrar-uf` | simula a limpeza da base por estado (`-- --confirmar` aplica) |
 | `npm run teste` | roda as seis suítes |

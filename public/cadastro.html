@@ -95,6 +95,8 @@
 
   <script>
     const SLUG = location.pathname.split('/').filter(Boolean)[1] || '';
+    // Coletar dados: ?e=<codigo> diz qual embaixador trouxe esta pessoa.
+    const EMBAIXADOR = new URLSearchParams(location.search).get('e') || null;
     const form = document.getElementById('form');
     const caixa = document.getElementById('caixa');
     const erro = document.getElementById('erro');
@@ -103,6 +105,7 @@
       e.preventDefault();
       erro.style.display = 'none';
       const dados = Object.fromEntries(new FormData(form));
+      if (EMBAIXADOR) dados.embaixador = EMBAIXADOR;
       const botao = form.querySelector('button[type=submit]');
       botao.disabled = true;
       botao.textContent = 'enviando…';
@@ -148,6 +151,23 @@
       document.querySelector('.selo').textContent =
         c.nome.split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
     });
+
+    // Quem indicou aparece no alto do formulário. Transparência não é enfeite:
+    // saber por quem se chegou é o que diferencia captação de abordagem fria.
+    if (EMBAIXADOR) {
+      fetch(`/api/embaixador/${SLUG}/${encodeURIComponent(EMBAIXADOR)}`)
+        .then((r) => r.json())
+        .then((e) => {
+          if (e.erro) return;
+          const aviso = document.createElement('p');
+          aviso.style.cssText =
+            'margin:10px 0 0;padding:9px 12px;border-radius:10px;background:#eef2ff;' +
+            'color:#3730a3;font-size:12.5px;font-weight:600';
+          aviso.textContent = `Você chegou pela indicação de ${e.nome}` +
+            (e.papel ? ` · ${e.papel}` : '');
+          document.getElementById('cargo-campanha').after(aviso);
+        });
+    }
   </script>
 </body>
 </html>

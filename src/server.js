@@ -18,6 +18,7 @@ import { lerConversa, sugerirRespostas } from './conversa.js';
 import * as whatsapp from './whatsapp.js';
 import * as firebase from './firestore.js';
 import * as adicao from './adicionar-grupo.js';
+import * as embaixadores from './embaixadores.js';
 import * as transmissao from './transmissao.js';
 import * as instancia from './instancia.js';
 import * as wacore from './wacore.js';
@@ -228,6 +229,22 @@ async function apiPublica(req, res, url) {
       : json(res, { erro: 'Campanha não encontrada' }, 404);
   }
 
+  // Quem indicou — o formulário mostra "você chegou pela indicação de X".
+  // Pública de propósito: quem abre o link precisa saber de onde ele veio, e é
+  // isso que faz a captação por embaixador ser transparente e não invasiva.
+  const casaEmbaixador = rota.match(/^\/embaixador\/([a-z0-9-]+)\/([a-z0-9-]+)$/);
+  if (casaEmbaixador && req.method === 'GET') {
+    const [, slug, codigo] = casaEmbaixador;
+    const campanha = contas.obterCampanha(slug);
+    if (!campanha || !campanha.ativa) return json(res, { erro: 'Campanha não encontrada' }, 404);
+    return comCampanha(slug, () => {
+      const e = embaixadores.porCodigo(codigo);
+      return e && e.ativo
+        ? json(res, { nome: e.nome, papel: e.papel })
+        : json(res, { erro: 'Indicação não encontrada' }, 404);
+    });
+  }
+
   // Pesquisa de pautas — formulário público, um por campanha: /formulario/<slug>
   const casaFormulario = rota.match(/^\/formulario\/([a-z0-9-]+)$/);
   if (casaFormulario && req.method === 'POST') {
@@ -241,7 +258,12 @@ async function apiPublica(req, res, url) {
         recomputar();
         firebase.publicarPessoa(r.pessoaId);
         await firebase.processarFila();
-        return json(res, { ok: true, ...r });
+        // Sem isto o botão "Entrar no Grupo do WhatsApp" da tela de sucesso
+        // apontava para "#". Vem de cache na quase totalidade dos envios.
+        const linkWhatsApp = r.grupoRecomendado
+          ? await adicao.linkDeConvite(r.grupoRecomendado.id)
+          : null;
+        return json(res, { ok: true, ...r, linkWhatsApp });
       });
     } catch (erro) {
       return json(res, { erro: erro.message }, 400);
@@ -266,6 +288,24 @@ async function apiPublica(req, res, url) {
 }
 
 // ------------------------------------------------------------------- API
+/**
+ * Origem pública do servidor, para montar link divulgável.
+ *
+ * Sai do `url_cadastro` configurado na campanha (ou do .env). Devolve null
+ * quando não há nada configurado — e aí o painel avisa, em vez de entregar um
+ * link com localhost que ninguém de fora consegue abrir.
+ */
+function basePublica() {
+  for (const candidato of [getConfig('url_cadastro', null), process.env.URL_CADASTRO]) {
+    if (!candidato) continue;
+    try {
+      const { origin, hostname } = new URL(candidato);
+      if (!/^(localhost|127\.|0\.0\.0\.0|\[?::1)/.test(hostname)) return origin;
+    } catch { /* valor inválido, tenta o próximo */ }
+  }
+  return null;
+}
+
 async function api(req, res, url, sessao) {
   const rota = url.pathname.replace('/api', '');
   const metodo = req.method;
@@ -401,7 +441,13 @@ async function api(req, res, url, sessao) {
         faixas_apoio: FAIXAS_APOIO, cores_apoio: CORES_APOIO,
         campanha: { slug: campanha.slug, nome: campanha.nome, cargo: campanha.cargo, cor: campanha.cor },
         permissoes: contas.PERMISSOES[usuario.papel],
-        papel: usuario.papel
+        papel: usuario.papel,
+        // Endereço público do servidor. O painel roda em localhost na máquina da
+        // equipe, e `location.origin` ali gera link que só funciona nessa máquina
+        // — inútil para mandar para a Luciana. Ver basePublica().
+        base_publica: basePublica(),
+        // Número conectado, para montar o link wa.me de captação.
+        whatsapp_telefone: getConfig('whatsapp_telefone', null)
       });
     }
 
@@ -483,6 +529,56 @@ async function api(req, res, url, sessao) {
     // --- pessoas -----------------------------------------------------------
     if (rota === '/pessoas' && metodo === 'GET') return json(res, listarPessoas(filtrosDaUrl(url)));
     if (rota === '/fila' && metodo === 'GET') return json(res, filaDeAcao());
+    // ------------------------------------------------- coletar dados
+    if (rota === '/embaixadores' && metodo === 'GET') {
+      return json(res, {
+        resumo: embaixadores.resumoDaColeta(),
+        itens: embaixadores.rendimento()
+      });
+    }
+    if (rota === '/embaixadores' && metodo === 'POST') {
+      if (!pode('editarFicha')) return negar();
+      const corpo = await lerCorpo(req);
+      try { return json(res, embaixadores.criar(corpo)); }
+      catch (erro) { return json(res, { erro: erro.message }, 400); }
+    }
+    const casaEmb = rota.match(/^\/embaixadores\/(\d+)(\/ativo|\/captadas|\/kit)?$/);
+    if (casaEmb) {
+      const id = Number(casaEmb[1]);
+      if (casaEmb[2] === '/captadas' && metodo === 'GET') {
+        return json(res, embaixadores.captadasDe(id));
+      }
+      if (casaEmb[2] === '/kit' && metodo === 'GET') {
+        const e = embaixadores.porId(id);
+        if (!e) return json(res, { erro: 'Embaixador não encontrado' }, 404);
+        // O link tem de ser o público: kit com localhost é kit inútil.
+        const raiz = basePublica();
+        if (!raiz) {
+          return json(res, {
+            erro: 'Configure o endereço público da campanha (URL_CADASTRO) antes de gerar o kit — ' +
+              'os textos sairiam com um link que só funciona nesta máquina.'
+          }, 400);
+        }
+        return json(res, embaixadores.kitDeDivulgacao(e, {
+          link: `${raiz}/formulario/${campanha.slug}?e=${e.codigo}`,
+          linkWhatsapp: embaixadores.linkWhatsapp(e.codigo, getConfig('whatsapp_telefone', null), campanha.nome),
+          candidata: campanha.nome,
+          cargo: campanha.cargo
+        }));
+      }
+      if (casaEmb[2] === '/ativo' && metodo === 'POST') {
+        if (!pode('editarFicha')) return negar();
+        const corpo = await lerCorpo(req);
+        return json(res, embaixadores.definirAtivo(id, Boolean(corpo.ativo)));
+      }
+      if (!casaEmb[2] && metodo === 'POST') {
+        if (!pode('editarFicha')) return negar();
+        const corpo = await lerCorpo(req);
+        try { return json(res, embaixadores.renomear(id, corpo)); }
+        catch (erro) { return json(res, { erro: erro.message }, 400); }
+      }
+    }
+
     if (rota === '/grupos' && metodo === 'GET') return json(res, listarGrupos());
     if (rota === '/tags' && metodo === 'GET') return json(res, listarTags());
 
@@ -717,6 +813,8 @@ async function api(req, res, url, sessao) {
       return json(res, {
         ...estadoAtual,
         provedor: campanha.provedor || 'baileys',
+        modo: whatsapp.modoAtual(),
+        agenda: whatsapp.resumoDaAgenda(),
         wacoreDisponivel: wacore.configurado(),
         pareamentoLiberado: wacore.pareamentoLiberado(),
         campanha: campanha.slug,
@@ -796,7 +894,10 @@ async function api(req, res, url, sessao) {
     if (rota.startsWith('/whatsapp/') && metodo === 'POST') {
       if (!pode('conectarWhatsapp')) return negar();
       if (rota === '/whatsapp/conectar') {
-        try { return json(res, await instancia.conectar(campanha.slug)); }
+        // `modo` decide se a conexão lê conversas ou só a agenda. Vem da tela
+        // que pediu: Coletar dados manda 'contatos', a aba WhatsApp 'completo'.
+        const { modo } = await lerCorpo(req);
+        try { return json(res, await instancia.conectar(campanha.slug, { modo })); }
         catch (erro) { return json(res, { erro: erro.message }, 400); }
       }
 

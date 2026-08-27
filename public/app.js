@@ -108,6 +108,7 @@ VISTAS.panorama = async () => {
 
   $('#conta-pessoas').textContent = num(p.pessoas);
   $('#conta-grupos').textContent = num(p.grupos);
+  $('#conta-coletar').textContent = num(p.captadas_indicacao || 0);
 
   $('#conta-abaixos').textContent = num(p.abaixos.length);
   pintarAlertas(p.alertas);
@@ -1467,6 +1468,12 @@ VISTAS.grupos = async () => {
                 <div style="font-weight:650;letter-spacing:-.01em">${esc(g.nome)}</div>
                 <div class="sub" style="color:var(--tinta-4);font-size:11.5px">${esc(g.descricao || '')}</div>
               </div>
+              <span class="chip" style="margin-left:auto;flex-shrink:0;background:${g.da_campanha ? '#dcfce7' : '#f1f5f9'};color:${g.da_campanha ? '#166534' : '#64748b'}"
+                    title="${g.da_campanha
+                      ? 'Grupo da campanha: pode receber pessoas da base.'
+                      : 'Grupo de terceiro (o telefone da campanha está nele, mas ele não é da campanha). A fila de adição recusa este grupo de propósito. Para liberar: npm run grupos -- --marcar ' + g.id}">
+                ${g.da_campanha ? (g.tema_rotulo ? esc(g.tema_rotulo) : 'campanha') : 'externo'}
+              </span>
             </div>
             <div class="linha-dado"><span class="k">Membros</span><span class="v">${num(g.membros)}</span></div>
             <div class="linha-dado"><span class="k">Falaram em 7 dias</span><span class="v">${num(g.ativos_7d)} <span style="color:var(--tinta-4);font-weight:400">(${Math.round((g.ativos_7d / (g.membros || 1)) * 100)}%)</span></span></div>
@@ -1474,7 +1481,10 @@ VISTAS.grupos = async () => {
             <div class="linha-dado"><span class="k">Última atividade</span><span class="v">${quando(g.ultima_msg) || '—'}</span></div>
             <div style="display:flex;gap:7px;margin-top:12px">
               <button class="btn" style="flex:1;justify-content:center" data-abrir-grupo="${g.id}">Ver pessoas</button>
-              <button class="btn primario" style="flex:1;justify-content:center" data-adicionar="${g.id}">➕ Adicionar</button>
+              ${g.da_campanha
+                ? `<button class="btn primario" style="flex:1;justify-content:center" data-adicionar="${g.id}">➕ Adicionar</button>`
+                : `<button class="btn" style="flex:1;justify-content:center;opacity:.55;cursor:not-allowed" disabled
+                     title="Grupo de terceiro — a fila de adição recusa. Libere com: npm run grupos -- --marcar ${g.id}">🔒 Externo</button>`}
             </div>
           </div>
         </section>`).join('')}
@@ -1779,6 +1789,153 @@ VISTAS.cadastrar = async () => {
     botao.disabled = false; botao.textContent = 'Cadastrar na rede';
     e.target.querySelector('[name=nome]').focus();
   });
+};
+
+// ====================================================== COLETAR DADOS
+// ====================================================== COLETAR DADOS
+//
+// Ler o QR uma vez e a agenda inteira do celular entra na base — sem ninguém
+// digitar contato nenhum.
+//
+// A importação já acontecia no pareamento (guardarContatos, em whatsapp.js).
+// O que faltava era uma tela que a mostrasse: quantos entraram, quando, e o
+// que fazer com eles depois.
+VISTAS.coletar = async () => {
+  const s = estado.whatsapp = await api('/whatsapp/status');
+  const conectado = s.status === 'conectado';
+  const a = s.agenda || { naAgenda: 0, contatos: 0, importadaEm: null };
+
+  const elConta = $('#conta-coletar');
+  if (elConta) elConta.textContent = num(a.contatos);
+
+  // Amostra do que entrou: número seco não convence, nome na tela sim.
+  const recentes = a.contatos
+    ? await api('/pessoas?origem=contato&ordenar=novos&porPagina=8').catch(() => null)
+    : null;
+
+  conteudo.innerHTML = `
+    <div class="cabecalho">
+      <div>
+        <h2>Coletar dados</h2>
+        <p>Leia o QR uma vez. A agenda do celular vira ficha na base — nenhum
+           contato é digitado à mão.</p>
+      </div>
+      <div class="acoes">
+        ${conectado
+          ? '<button class="btn" data-acao="coletar-recarregar">↻ Atualizar</button>'
+          : '<button class="btn primario" data-acao="coletar-conectar">Gerar QR Code</button>'}
+      </div>
+    </div>
+
+    <div class="grade g-2">
+      <section class="card">
+        <header>
+          <h3>${conectado ? '✅ Conectado' : '📱 Conectar o celular'}</h3>
+          ${s.telefone ? `<span class="dica">${esc(s.telefone)}</span>` : ''}
+        </header>
+        <div class="corpo">
+          ${s.qr ? `
+            <div class="qr-caixa">
+              <img src="${s.qr}" alt="QR Code do WhatsApp">
+              <p style="font-size:12.5px;color:var(--tinta-3);max-width:340px;margin:0;line-height:1.6">
+                No celular: <b>WhatsApp → Dispositivos conectados → Conectar dispositivo</b>.
+                Deixe o celular já nessa tela <b>antes</b> de olhar o código — ele expira
+                e é renovado sozinho.
+              </p>
+            </div>
+          ` : s.codigo ? `
+            <div class="qr-caixa">
+              <div style="font-size:12px;color:var(--tinta-3);letter-spacing:.08em">CÓDIGO PARA ${esc(s.codigoPara || '')}</div>
+              <div style="font-family:ui-monospace,monospace;font-size:38px;font-weight:700;
+                          letter-spacing:.18em;margin:6px 0">${esc(s.codigo)}</div>
+              <p style="font-size:12.5px;color:var(--tinta-3);max-width:340px;margin:0;line-height:1.6">
+                No celular: <b>Dispositivos conectados → Conectar dispositivo →
+                Conectar com número de telefone</b>. Digite o código acima.
+              </p>
+            </div>
+          ` : conectado ? `
+            <div class="qr-caixa">
+              <div style="font-size:46px">📇</div>
+              <p style="margin:0;font-weight:600">${num(a.contatos)} contato(s) na base</p>
+              <p style="font-size:12.5px;color:var(--tinta-3);margin:0">
+                ${a.importadaEm ? `última importação ${quando(a.importadaEm)}` : 'aguardando a agenda chegar…'}
+              </p>
+            </div>
+          ` : `
+            <div class="qr-caixa">
+              <div style="font-size:46px">📱</div>
+              <p style="margin:0;color:var(--tinta-3);font-size:13px;max-width:330px;line-height:1.6">
+                Clique em <b>Gerar QR Code</b> e leia com o celular. O sistema entra
+                como dispositivo conectado — o mesmo mecanismo do WhatsApp Web — e
+                a agenda vem junto.
+              </p>
+              ${s.erro ? `<div class="alerta" style="text-align:left">${esc(s.erro)}</div>` : ''}
+            </div>`}
+        </div>
+      </section>
+
+      <div style="display:grid;gap:16px;align-content:start">
+        <section class="card">
+          <header><h3>O que entrou</h3></header>
+          <div class="corpo">
+            <div class="grade g-kpi">
+              ${kpi('Na agenda', num(a.naAgenda), 'salvos no seu celular')}
+              ${kpi('Importados', num(a.contatos), 'fichas criadas sozinhas')}
+            </div>
+            ${a.contatos ? `
+              <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.6;margin:12px 0 0">
+                Cada um virou ficha em <b>👥 Pessoas</b> e já entra na classificação de
+                <b>🤝 Potencial de apoio</b> e na seleção de <b>📣 Transmissão</b>.
+              </p>` : `
+              <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.6;margin:12px 0 0">
+                Nada importado ainda. A agenda chega em lotes por alguns segundos
+                depois do pareamento — a tela avisa quando começar.
+              </p>`}
+          </div>
+        </section>
+
+        ${recentes?.itens?.length ? `
+          <section class="card">
+            <header><h3>Últimos importados</h3><span class="dica">${num(recentes.total)}</span></header>
+            <div class="corpo" style="padding-top:6px">
+              ${recentes.itens.map((p) => `
+                <div class="fila-item" data-pessoa="${p.id}">
+                  <span class="avatar" style="background:${corDoNome(p.exibicao)}">${esc(iniciais(p.exibicao))}</span>
+                  <span style="min-width:0;flex:1">
+                    <div class="nome">${esc(p.exibicao)}${p.na_agenda ? ' <span class="dica">· na agenda</span>' : ''}</div>
+                    <div class="porque">${esc(p.local || 'sem cidade')}</div>
+                  </span>
+                  ${p.faixa_apoio ? `<span class="chip" style="margin-left:auto;background:${corApoio(p.faixa_apoio)}22;color:${corApoio(p.faixa_apoio)}">${esc(p.faixa_apoio)}</span>` : ''}
+                </div>`).join('')}
+            </div>
+          </section>` : ''}
+      </div>
+    </div>
+
+    ${conectado && s.modo === 'completo' ? `
+      <div class="alerta" style="margin-top:16px">
+        <b>Esta conexão está em modo completo.</b> Ela foi aberta pela aba
+        🔌 WhatsApp e está lendo conversas também. Para trocar para só contatos,
+        desconecte ali e leia o QR de novo por aqui.
+      </div>` : ''}
+
+    <div class="alerta info" style="margin-top:16px">
+      <b>Esta tela não lê suas conversas.</b> O QR daqui conecta em modo
+      <i>somente contatos</i>: entra o número, o nome que <b>você</b> salvou na
+      agenda e o nome de perfil. Mensagem nenhuma é lida ou guardada — nem o
+      histórico, nem as que chegarem depois.
+      <br><br>
+      Para acompanhar grupos, conversas e alertas, use a aba <b>🔌 WhatsApp</b>:
+      lá o QR conecta em modo completo.
+      <br><br>
+      Quem está salvo na sua agenda é marcado como tal, e isso pesa na
+      classificação: um número que você guardou tem vínculo real, e é mais
+      provável que aceite entrar num grupo do que um desconhecido.
+      <br><br>
+      <b>Antes de disparar para esta base</b>, lembre que a lei eleitoral veda usar
+      cadastro de terceiros (Lei 9.504/97, art. 57-E). Agenda própria da campanha
+      é vínculo legítimo; lista comprada ou cedida, não.
+    </div>`;
 };
 
 // ============================================================ ACESSOS
@@ -2103,6 +2260,34 @@ VISTAS.conexao = async () => {
       </section>
 
       <div style="display:grid;gap:16px;align-content:start">
+        <section class="card">
+          <header>
+            <h3>📇 Agenda do celular</h3>
+            <span class="dica">${s.agenda?.importadaEm ? quando(s.agenda.importadaEm) : 'aguardando'}</span>
+          </header>
+          <div class="corpo">
+            ${s.agenda?.naAgenda ? `
+              <div class="grade g-kpi" style="margin-bottom:10px">
+                ${kpi('Na agenda', num(s.agenda.naAgenda), 'contatos salvos no celular')}
+                ${kpi('Importados', num(s.agenda.contatos), 'entraram pela conexão')}
+              </div>
+              <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.6;margin:0">
+                Importados sozinhos ao ler o QR — nenhum foi digitado. Cada um virou ficha
+                em <b>👥 Pessoas</b> e já conta na classificação de <b>🤝 Potencial de apoio</b>.
+              </p>
+            ` : `
+              <p style="font-size:13px;color:var(--tinta-3);line-height:1.6;margin:0">
+                Ainda não há contatos importados. Ao ler o QR, o sistema recebe a agenda
+                do celular e cria uma ficha por número — automaticamente, sem cadastro manual.
+              </p>
+              <div class="alerta info" style="margin-top:10px;font-size:12.5px">
+                Quem está salvo na sua agenda entra marcado como tal. Esse sinal pesa na
+                classificação: alguém que você guardou no celular tem vínculo real, e é
+                mais provável que aceite entrar num grupo.
+              </div>`}
+          </div>
+        </section>
+
         <section class="card">
           <header><h3>Como funciona</h3></header>
           <div class="corpo">
@@ -2793,6 +2978,17 @@ document.addEventListener('click', async (e) => {
     return abrirPessoa(estado.pessoaAberta.id);
   }
 
+  if (alvo('[data-acao="coletar-recarregar"]')) return render();
+
+  if (alvo('[data-acao="coletar-conectar"]')) {
+    const b = alvo('[data-acao="coletar-conectar"]');
+    b.disabled = true; b.textContent = 'gerando…';
+    const r = await api('/whatsapp/conectar', { method: 'POST', body: { modo: 'contatos' } });
+    b.disabled = false; b.textContent = 'Gerar QR Code';
+    if (r?.erro) return toast('Não deu', r.erro, 'critico');
+    return render();
+  }
+
   if (alvo('[data-acao="wa-provedor"]')) {
     const atual = estado.whatsapp?.provedor || 'baileys';
     const novo = atual === 'wacore' ? 'baileys' : 'wacore';
@@ -2832,7 +3028,7 @@ document.addEventListener('click', async (e) => {
   if (alvo('[data-acao="wa-conectar"]')) {
     const b = alvo('[data-acao="wa-conectar"]');
     b.disabled = true; b.textContent = 'gerando…';
-    await api('/whatsapp/conectar', { method: 'POST' });
+    await api('/whatsapp/conectar', { method: 'POST', body: { modo: 'completo' } });
     return render();
   }
   if (alvo('[data-acao="wa-desconectar"]')) {
@@ -2993,7 +3189,9 @@ fluxo.onmessage = (e) => {
   if (evento.tipo === 'status') {
     api('/whatsapp/status').then((s) => {
       pintarStatus(s);
-      if (estado.vista === 'conexao') render();
+      // "coletar" também mostra QR e contagem: sem isto o código novo aparecia
+      // só na aba de infraestrutura, e a tela de coleta ficava parada.
+      if (['conexao', 'coletar'].includes(estado.vista)) render();
     });
   }
 
@@ -3013,6 +3211,17 @@ fluxo.onmessage = (e) => {
   }
 
   if (evento.tipo === 'mensagem' && estado.vista === 'conversas') render();
+
+  // Agenda chegando. Vem em lotes por vários segundos depois do pareamento, e
+  // sem isto a tela ficava parada enquanto centenas de contatos entravam —
+  // parecia que a importação não estava acontecendo.
+  if (evento.tipo === 'contatos') {
+    toast('Agenda importada', `${num(evento.atualizados)} contato(s) · ${num(evento.naAgenda)} salvos no celular`);
+    estado.panorama = null;
+    if (['conexao', 'coletar', 'pessoas', 'apoio', 'panorama'].includes(estado.vista)) render();
+  }
+
+  if (evento.tipo === 'historico' && estado.vista === 'conexao') render();
 
   if (evento.tipo === 'fila_progresso') {
     const feito = evento.resultado === 'adicionado' ? 'adicionada ao' : 'convidada para o';

@@ -171,15 +171,77 @@ export const ABAIXOS = {
   }
 };
 
-/** Fallback para formulários novos que ainda não estão no mapa acima. */
+// Pistas para deduzir bandeira e temas de um formulário que ainda não está no
+// mapa acima.
+//
+// POR QUE: `form_id` do Meta só existe depois do formulário publicado. Sem isto,
+// o primeiro lote do Proteja Digital entraria com `temas: []` — ou seja, gente
+// captada na bandeira mais forte da campanha chegava sem interesse nenhum
+// registrado, e sem interesse não há recomendação de grupo nem segmentação.
+// A ordem importa: o recorte mais específico vem primeiro.
+const PISTAS_DE_ABAIXO = [
+  {
+    termos: ['proteja digital', 'protecao digital', 'digital', 'internet', 'online', 'tela', 'cyberbullying', 'rede social'],
+    bandeira: 'Proteção digital da infância',
+    temas: ['protecao_digital', 'infancia_juventude', 'seguranca']
+  },
+  {
+    termos: ['inclusao', 'deficiencia', 'autis', 'atipic', 'neurodiver', 'pcd'],
+    bandeira: 'Inclusão',
+    temas: ['pcd', 'educacao', 'infancia_juventude']
+  },
+  {
+    termos: ['quem cuida', 'profissional', 'profissionais', 'conselho tutelar', 'enfermag', 'agente de saude'],
+    bandeira: 'Cuidar de quem cuida',
+    temas: ['saude', 'educacao']
+  },
+  {
+    termos: ['saude mental', 'psicolog', 'ansiedade', 'depressao', 'suicidio'],
+    bandeira: 'Saúde mental',
+    temas: ['saude', 'educacao', 'infancia_juventude']
+  },
+  {
+    termos: ['familia', 'familias'],
+    bandeira: 'Fortalecimento das famílias',
+    temas: ['mulher', 'infancia_juventude', 'assistencia_social']
+  },
+  {
+    termos: ['escola', 'educacao', 'professor', 'educador'],
+    bandeira: 'Educação preventiva',
+    temas: ['educacao', 'seguranca', 'infancia_juventude']
+  },
+  {
+    termos: ['crianca', 'criancas', 'adolescente', 'infancia', 'abuso', 'pena', 'prescricao'],
+    bandeira: 'Proteção da infância',
+    temas: ['infancia_juventude', 'seguranca']
+  },
+  {
+    termos: ['mulher', 'mulheres', 'violencia domestica', 'feminicidio', 'maria da penha'],
+    bandeira: 'Mulher',
+    temas: ['mulher', 'seguranca']
+  }
+];
+
+/**
+ * Fallback para formulários novos que ainda não estão no mapa acima.
+ *
+ * Quando o formulário do Meta entrar em produção, o certo é registrá-lo em
+ * `ABAIXOS` com o `form_id` real (aparece na coluna `form_id` do CSV, no
+ * formato `f:123...`) — a chave fica estável mesmo se o nome do anúncio mudar.
+ * Até lá, a dedução por nome mantém o lead segmentado.
+ */
 export function definicaoDoAbaixo(formId, formName) {
   if (ABAIXOS[formId]) return { formId, ...ABAIXOS[formId] };
+
+  const alvo = semAcento(formName || '');
+  const pista = PISTAS_DE_ABAIXO.find((p) => p.termos.some((t) => alvo.includes(t)));
+
   return {
     formId,
     chave: semAcento(formName).replace(/[^a-z0-9]+/g, '-').slice(0, 48) || formId,
     titulo: formName || 'Abaixo-assinado sem nome',
-    bandeira: null,
-    temas: []
+    bandeira: pista?.bandeira ?? null,
+    temas: pista?.temas ?? []
   };
 }
 
