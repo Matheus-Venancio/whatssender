@@ -152,6 +152,37 @@ async function servirArquivo(res, nome) {
   }
 }
 
+/**
+ * Garante que um cadastro recem-criado chegou ao Firestore — e grita se nao.
+ *
+ * O formulario e a unica porta por onde entra gente que a campanha nao tem de
+ * outro jeito: nao veio de grupo, nao esta na agenda, so preencheu. Se o envio
+ * ficar preso na fila local e o container for recriado, essa pessoa some sem
+ * deixar rastro. O log com nome e telefone e o ultimo recurso de recuperacao.
+ */
+async function garantirNoFirestore(pessoaId, quem) {
+  firebase.publicarPessoa(pessoaId);
+  await firebase.processarFila();
+
+  const estado = firebase.estadoDoFirebase();
+  if (estado.conectado && !estado.pendentes) return { salvoNaNuvem: true };
+
+  console.error(
+    `
+  ⚠  CADASTRO NAO CHEGOU AO FIRESTORE
+`
+    + `     ${quem}
+`
+    + `     ${estado.conectado ? `${estado.pendentes} item(ns) ainda na fila` : `Firebase desconectado: ${estado.erro || 'sem detalhe'}`}
+`
+    + `     Ele esta salvo localmente. Se este servidor nao tem disco, ANOTE
+`
+    + `     este contato antes do proximo deploy.
+`
+  );
+  return { salvoNaNuvem: false };
+}
+
 // ---------------------------------------------------------------- API pública
 async function apiPublica(req, res, url) {
   const rota = url.pathname.replace('/api', '');
@@ -215,9 +246,9 @@ async function apiPublica(req, res, url) {
       return await comCampanha(slug, async () => {
         const r = salvarCadastro(corpo);
         recomputar();
-        firebase.publicarPessoa(r.pessoaId);
-        await firebase.processarFila();
-        return json(res, { ok: true, ...r });
+        const nuvemOk = await garantirNoFirestore(r.pessoaId,
+          `${corpo.nome || 'sem nome'} · ${corpo.telefone || 'sem telefone'} · ${slug}`);
+        return json(res, { ok: true, ...r, ...nuvemOk });
       });
     } catch (erro) {
       return json(res, { erro: erro.message }, 400);
@@ -258,14 +289,14 @@ async function apiPublica(req, res, url) {
       return await comCampanha(slug, async () => {
         const r = salvarFormularioPautas(corpo);
         recomputar();
-        firebase.publicarPessoa(r.pessoaId);
-        await firebase.processarFila();
+        const nuvemOk = await garantirNoFirestore(r.pessoaId,
+          `${corpo.nome || 'sem nome'} · ${corpo.telefone || 'sem telefone'} · ${slug}`);
         // Sem isto o botão "Entrar no Grupo do WhatsApp" da tela de sucesso
         // apontava para "#". Vem de cache na quase totalidade dos envios.
         const linkWhatsApp = r.grupoRecomendado
           ? await adicao.linkDeConvite(r.grupoRecomendado.id)
           : null;
-        return json(res, { ok: true, ...r, linkWhatsApp });
+        return json(res, { ok: true, ...r, ...nuvemOk, linkWhatsApp });
       });
     } catch (erro) {
       return json(res, { erro: erro.message }, 400);
@@ -1161,6 +1192,33 @@ servidor.listen(PORTA, async () => {
       await comCampanha(c.slug, () => firebase.iniciarFirebase());
     } catch (erro) {
       console.error(`[firebase:${c.slug}]`, erro.message);
+    }
+
+    // RESTAURAR AS PESSOAS. Sem isto, todo deploy apagava a base.
+    //
+    // nuvem.js trazia de volta campanhas, usuarios, chaves e sessoes — mas as
+    // PESSOAS so voltavam se alguem clicasse em "Trazer base" no painel. Num
+    // servidor sem disco, cada atualizacao devolvia um painel com zero
+    // cadastros, e quem tinha preenchido o formulario no intervalo sumia.
+    //
+    // A condicao e base local VAZIA: com disco, ou depois da primeira
+    // restauracao, isto nao roda de novo. E a restauracao e um upsert — nao
+    // sobrescreve nem apaga o que ja existe aqui.
+    try {
+      const vazia = comCampanha(c.slug, () =>
+        db.prepare('SELECT COUNT(*) AS n FROM pessoas').get().n === 0);
+
+      if (vazia && contas.configDaCampanha(c.slug)?.firebaseKey) {
+        console.log(`  [restauro:${c.slug}] base local vazia — buscando no Firestore…`);
+        const r = await restaurarDoFirestore(c.slug, { confirmar: true });
+        if (r.erro) console.error(`  [restauro:${c.slug}] ${r.erro}`);
+        else {
+          console.log(`  [restauro:${c.slug}] ${r.depois.pessoas} pessoas · `
+            + `${r.depois.grupos} grupos · ${r.depois.assinaturas} assinaturas`);
+        }
+      }
+    } catch (erro) {
+      console.error(`  [restauro:${c.slug}] falhou:`, erro.message);
     }
   }
 
