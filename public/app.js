@@ -1804,6 +1804,7 @@ VISTAS.coletar = async () => {
   const s = estado.whatsapp = await api('/whatsapp/status');
   const conectado = s.status === 'conectado';
   const a = s.agenda || { naAgenda: 0, contatos: 0, importadaEm: null };
+  const { itens: coletores = [] } = await api('/coletores');
 
   const elConta = $('#conta-coletar');
   if (elConta) elConta.textContent = num(a.contatos);
@@ -1821,96 +1822,74 @@ VISTAS.coletar = async () => {
            contato é digitado à mão.</p>
       </div>
       <div class="acoes">
-        ${conectado
-          ? '<button class="btn" data-acao="coletar-recarregar">↻ Atualizar</button>'
-          : '<button class="btn primario" data-acao="coletar-conectar">Gerar QR Code</button>'}
+        <button class="btn" data-acao="coletar-recarregar">↻ Atualizar</button>
+        <button class="btn primario" data-acao="coletor-novo">+ Adicionar celular</button>
       </div>
     </div>
 
-    <div class="grade g-2">
+    <div class="grade g-kpi" style="margin-bottom:16px">
+      ${kpi('Celulares', num(coletores.length), 'ligados a esta base')}
+      ${kpi('Na agenda', num(a.naAgenda), 'salvos em algum celular')}
+      ${kpi('Importados', num(a.contatos), 'fichas criadas sozinhas')}
+    </div>
+
+    ${coletores.length ? `
+      <div class="grade g-2">
+        ${coletores.map((c) => {
+          const cor = { conectado: '#16a34a', qr: '#d97706', conectando: '#2563eb' }[c.status] || '#64748b';
+          return `
+          <section class="card">
+            <header>
+              <h3>${esc(c.nome)}</h3>
+              <span class="chip" style="background:${cor}22;color:${cor}">${esc(c.status)}</span>
+            </header>
+            <div class="corpo">
+              ${c.qr ? `
+                <div class="qr-caixa">
+                  <img src="${c.qr}" alt="QR de ${esc(c.nome)}" style="max-width:230px">
+                  <p style="font-size:12px;color:var(--tinta-3);max-width:320px;margin:0;line-height:1.6">
+                    Neste celular: <b>WhatsApp → Dispositivos conectados → Conectar
+                    dispositivo</b>. Deixe já nessa tela antes de olhar o código.
+                  </p>
+                </div>
+              ` : `
+                <div class="linha-dado"><span class="k">Número</span>
+                  <span class="v">${c.telefone ? esc(c.telefone) : '<span class="vazio">não pareado</span>'}</span></div>
+                <div class="linha-dado"><span class="k">Contatos trazidos</span>
+                  <span class="v">${num(c.contatos)}</span></div>
+                <div class="linha-dado"><span class="k">Última agenda</span>
+                  <span class="v">${c.ultimo_em ? quando(c.ultimo_em) : '<span class="vazio">nunca</span>'}</span></div>
+                ${c.erro ? `<div class="alerta" style="margin-top:8px;font-size:12px">${esc(c.erro)}</div>` : ''}
+                ${c.status === 'conectado' && !c.contatos ? `
+                  <div class="alerta info" style="margin-top:8px;font-size:12px">
+                    Conectado, mas sem agenda. O WhatsApp só manda a lista completa
+                    <b>no pareamento</b> — use <b>Reparear</b> para trazê-la.
+                  </div>` : ''}
+              `}
+              <div style="display:flex;gap:7px;margin-top:12px;flex-wrap:wrap">
+                ${c.status === 'conectado'
+                  ? `<button class="btn" data-coletor-repar="${c.id}">↻ Reparear</button>
+                     <button class="btn" data-coletor-desligar="${c.id}">Desligar</button>`
+                  : `<button class="btn primario" style="flex:1;justify-content:center" data-coletor-ligar="${c.id}">Gerar QR Code</button>`}
+                <button class="btn" data-coletor-remover="${c.id}" title="Remover este celular">✕</button>
+              </div>
+            </div>
+          </section>`;
+        }).join('')}
+      </div>
+    ` : `
       <section class="card">
-        <header>
-          <h3>${conectado ? '✅ Conectado' : '📱 Conectar o celular'}</h3>
-          ${s.telefone ? `<span class="dica">${esc(s.telefone)}</span>` : ''}
-        </header>
-        <div class="corpo">
-          ${s.qr ? `
-            <div class="qr-caixa">
-              <img src="${s.qr}" alt="QR Code do WhatsApp">
-              <p style="font-size:12.5px;color:var(--tinta-3);max-width:340px;margin:0;line-height:1.6">
-                No celular: <b>WhatsApp → Dispositivos conectados → Conectar dispositivo</b>.
-                Deixe o celular já nessa tela <b>antes</b> de olhar o código — ele expira
-                e é renovado sozinho.
-              </p>
-            </div>
-          ` : s.codigo ? `
-            <div class="qr-caixa">
-              <div style="font-size:12px;color:var(--tinta-3);letter-spacing:.08em">CÓDIGO PARA ${esc(s.codigoPara || '')}</div>
-              <div style="font-family:ui-monospace,monospace;font-size:38px;font-weight:700;
-                          letter-spacing:.18em;margin:6px 0">${esc(s.codigo)}</div>
-              <p style="font-size:12.5px;color:var(--tinta-3);max-width:340px;margin:0;line-height:1.6">
-                No celular: <b>Dispositivos conectados → Conectar dispositivo →
-                Conectar com número de telefone</b>. Digite o código acima.
-              </p>
-            </div>
-          ` : conectado ? `
-            <div class="qr-caixa">
-              <div style="font-size:46px">📇</div>
-              <p style="margin:0;font-weight:600">${num(a.contatos)} contato(s) na base</p>
-              <p style="font-size:12.5px;color:var(--tinta-3);margin:0">
-                ${a.importadaEm ? `última importação ${quando(a.importadaEm)}` : 'aguardando a agenda chegar…'}
-              </p>
-            </div>
-          ` : `
-            <div class="qr-caixa">
-              <div style="font-size:46px">📱</div>
-              <p style="margin:0;color:var(--tinta-3);font-size:13px;max-width:330px;line-height:1.6">
-                Clique em <b>Gerar QR Code</b> e leia com o celular. O sistema entra
-                como dispositivo conectado — o mesmo mecanismo do WhatsApp Web — e
-                a agenda vem junto.
-              </p>
-              ${s.erro ? `<div class="alerta" style="text-align:left">${esc(s.erro)}</div>` : ''}
-            </div>`}
+        <div class="corpo" style="text-align:center;padding:34px 18px">
+          <div style="font-size:46px">📇</div>
+          <p style="margin:10px 0 0;font-weight:600">Nenhum celular ligado ainda</p>
+          <p style="font-size:13px;color:var(--tinta-3);max-width:420px;margin:8px auto 0;line-height:1.6">
+            Clique em <b>+ Adicionar celular</b> e leia o QR. Pode ligar quantos
+            quiser — o do candidato, o da coordenação, o do escritório — e todas
+            as agendas caem nesta mesma base, sem duplicar quem se repete.
+          </p>
         </div>
       </section>
-
-      <div style="display:grid;gap:16px;align-content:start">
-        <section class="card">
-          <header><h3>O que entrou</h3></header>
-          <div class="corpo">
-            <div class="grade g-kpi">
-              ${kpi('Na agenda', num(a.naAgenda), 'salvos no seu celular')}
-              ${kpi('Importados', num(a.contatos), 'fichas criadas sozinhas')}
-            </div>
-            ${a.contatos ? `
-              <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.6;margin:12px 0 0">
-                Cada um virou ficha em <b>👥 Pessoas</b> e já entra na classificação de
-                <b>🤝 Potencial de apoio</b> e na seleção de <b>📣 Transmissão</b>.
-              </p>` : `
-              <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.6;margin:12px 0 0">
-                Nada importado ainda. A agenda chega em lotes por alguns segundos
-                depois do pareamento — a tela avisa quando começar.
-              </p>`}
-          </div>
-        </section>
-
-        ${recentes?.itens?.length ? `
-          <section class="card">
-            <header><h3>Últimos importados</h3><span class="dica">${num(recentes.total)}</span></header>
-            <div class="corpo" style="padding-top:6px">
-              ${recentes.itens.map((p) => `
-                <div class="fila-item" data-pessoa="${p.id}">
-                  <span class="avatar" style="background:${corDoNome(p.exibicao)}">${esc(iniciais(p.exibicao))}</span>
-                  <span style="min-width:0;flex:1">
-                    <div class="nome">${esc(p.exibicao)}${p.na_agenda ? ' <span class="dica">· na agenda</span>' : ''}</div>
-                    <div class="porque">${esc(p.local || 'sem cidade')}</div>
-                  </span>
-                  ${p.faixa_apoio ? `<span class="chip" style="margin-left:auto;background:${corApoio(p.faixa_apoio)}22;color:${corApoio(p.faixa_apoio)}">${esc(p.faixa_apoio)}</span>` : ''}
-                </div>`).join('')}
-            </div>
-          </section>` : ''}
-      </div>
-    </div>
+    `}
 
     ${conectado && s.modo === 'completo' ? `
       <div class="alerta" style="margin-top:16px">
@@ -2980,12 +2959,53 @@ document.addEventListener('click', async (e) => {
 
   if (alvo('[data-acao="coletar-recarregar"]')) return render();
 
-  if (alvo('[data-acao="coletar-conectar"]')) {
-    const b = alvo('[data-acao="coletar-conectar"]');
-    b.disabled = true; b.textContent = 'gerando…';
-    const r = await api('/whatsapp/conectar', { method: 'POST', body: { modo: 'contatos' } });
-    b.disabled = false; b.textContent = 'Gerar QR Code';
-    if (r?.erro) return toast('Não deu', r.erro, 'critico');
+  if (alvo('[data-acao="coletor-novo"]')) {
+    const nome = prompt(
+      'De qual celular é esta agenda?\n\n'
+      + 'Ex.: "Celular da Cláudia", "Coordenação", "Escritório".\n'
+      + 'O nome serve para você saber de onde veio cada contato.'
+    );
+    if (!nome?.trim()) return;
+    const r = await api('/coletores', { method: 'POST', body: { nome } });
+    if (r.erro) return toast('Não deu', r.erro, 'critico');
+    toast('Celular adicionado', 'Clique em Gerar QR Code para ler a agenda dele.');
+    return render();
+  }
+
+  const ligar = alvo('[data-coletor-ligar]') || alvo('[data-coletor-repar]');
+  if (ligar) {
+    const id = ligar.dataset.coletorLigar || ligar.dataset.coletorRepar;
+    const repar = Boolean(ligar.dataset.coletorRepar);
+
+    // Reparear apaga a sessão de propósito: é a única forma de o WhatsApp
+    // reenviar a agenda completa, e a tela avisa antes de fazer isso.
+    if (repar && !confirm(
+      'Reparear este celular?\n\n'
+      + 'A sessão atual é encerrada e você lê o QR de novo. É assim que o '
+      + 'WhatsApp reenvia a agenda inteira — reconectar sem isso não traz contato nenhum.'
+    )) return;
+
+    ligar.disabled = true; ligar.textContent = 'gerando…';
+    const r = await api(`/coletores/${id}/conectar`, {
+      method: 'POST', body: { apagarSessao: repar }
+    });
+    if (r?.erro) { toast('Não deu', r.erro, 'critico'); return render(); }
+    return render();
+  }
+
+  const desligar = alvo('[data-coletor-desligar]');
+  if (desligar) {
+    await api(`/coletores/${desligar.dataset.coletorDesligar}/desconectar`, { method: 'POST' });
+    toast('Desligado', 'Os contatos já importados continuam na base.');
+    return render();
+  }
+
+  const removerColetor = alvo('[data-coletor-remover]');
+  if (removerColetor) {
+    if (!confirm('Remover este celular?\n\nA sessão é apagada. '
+      + 'Os contatos que ele já trouxe permanecem na base.')) return;
+    await api(`/coletores/${removerColetor.dataset.coletorRemover}`, { method: 'DELETE' });
+    toast('Removido', 'Os contatos importados continuam na base.');
     return render();
   }
 
@@ -3222,6 +3242,12 @@ fluxo.onmessage = (e) => {
   }
 
   if (evento.tipo === 'historico' && estado.vista === 'conexao') render();
+
+  // QR novo, contato entrando, coletor caindo — tudo chega por aqui.
+  if (evento.tipo === 'coletores') {
+    if (evento.novos) toast('Agenda chegando', `+${num(evento.novos)} contato(s)`);
+    if (estado.vista === 'coletar') render();
+  }
 
   if (evento.tipo === 'fila_progresso') {
     const feito = evento.resultado === 'adicionado' ? 'adicionada ao' : 'convidada para o';

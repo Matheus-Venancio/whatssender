@@ -21,6 +21,7 @@ import * as adicao from './adicionar-grupo.js';
 import * as embaixadores from './embaixadores.js';
 import * as transmissao from './transmissao.js';
 import * as instancia from './instancia.js';
+import * as coletores from './coletores.js';
 import * as wacore from './wacore.js';
 import { importarPasta } from './importar-leads.js';
 import * as contas from './contas.js';
@@ -113,6 +114,7 @@ const transmitir = (evento) => {
 whatsapp.assinar(transmitir);
 adicao.assinarFila((e) => transmitir({ ...e, tipo: `fila_${e.tipo}` }));
 transmissao.assinar((e) => transmitir({ ...e, tipo: `envio_${e.tipo}` }));
+coletores.assinar((e) => transmitir({ ...e, tipo: 'coletores' }));
 
 // Alerta e mensagem no privado viram aviso no WhatsApp de quem coordena.
 // Cada campanha manda pelo PRÓPRIO número — ver a nota em notificar.js.
@@ -786,6 +788,35 @@ async function api(req, res, url, sessao) {
     }
 
     // --- WhatsApp ----------------------------------------------------------
+    // --- coletores de agenda -----------------------------------------------
+    if (rota.startsWith('/coletores')) {
+      if (!pode('conectarWhatsapp')) return negar();
+
+      if (rota === '/coletores' && metodo === 'GET') {
+        return json(res, { itens: coletores.listar() });
+      }
+      if (rota === '/coletores' && metodo === 'POST') {
+        try { return json(res, coletores.criar(await lerCorpo(req))); }
+        catch (erro) { return json(res, { erro: erro.message }, 400); }
+      }
+
+      const casaC = rota.match(/^\/coletores\/(\d+)(\/[a-z]+)?$/);
+      if (casaC) {
+        const id = Number(casaC[1]);
+        try {
+          if (casaC[2] === '/conectar' && metodo === 'POST') {
+            const { apagarSessao } = await lerCorpo(req);
+            return json(res, await coletores.conectar(id, { apagarSessao: apagarSessao === true }));
+          }
+          if (casaC[2] === '/desconectar' && metodo === 'POST') {
+            return json(res, await coletores.desconectar(id));
+          }
+          if (!casaC[2] && metodo === 'DELETE') return json(res, await coletores.remover(id));
+          if (!casaC[2] && metodo === 'GET') return json(res, coletores.estadoDe(id));
+        } catch (erro) { return json(res, { erro: erro.message }, 400); }
+      }
+    }
+
     if (rota === '/whatsapp/provedor' && metodo === 'POST') {
       if (!pode('conectarWhatsapp')) return negar();
       const { provedor } = await lerCorpo(req);
@@ -1163,6 +1194,7 @@ async function encerrar(sinal) {
   try {
     for (const cliente of clientesSse) { try { cliente.res.end(); } catch { /* já fechou */ } }
     await whatsapp.encerrarTudo();
+    coletores.encerrarTudo();
 
     // Última chance de subir o que ficou na fila do Firestore — e de guardar a
     // sessão do WhatsApp. Sem disco, o que não subir aqui morre com o container

@@ -78,6 +78,11 @@ export const pastaDaCampanha = (slug) => join(PASTA_CAMPANHAS, slug);
 export const pastaDeAuth = (slug) => join(pastaDaCampanha(slug), 'auth');
 export const pastaDeLeads = (slug) => join(pastaDaCampanha(slug), 'leads');
 
+// Cada coletor tem a SUA pasta de sessão. Um celular por pasta: misturar
+// credenciais de números diferentes derruba o pareamento dos dois.
+export const pastaDeColetor = (slug, coletorId) =>
+  join(pastaDaCampanha(slug), 'coletores', String(coletorId));
+
 // ---------------------------------------------------------------- esquema
 function aplicarEsquema(banco) {
   banco.exec(`
@@ -302,6 +307,21 @@ CREATE INDEX IF NOT EXISTS idx_outbox_pendente ON outbox(enviado_em, id);
 -- Disparo privado em lista. Uma linha por envio planejado, para haver
 -- histórico auditável de quem recebeu o quê e quando — a legislação eleitoral
 -- cobra rastreabilidade da propaganda.
+-- Números de WhatsApp usados só para trazer agenda.
+--
+-- A campanha tem UMA linha principal (a que lê grupos e conversas), mas a
+-- agenda costuma estar espalhada por vários celulares — o do candidato, o da
+-- coordenação, o do escritório. Cada coletor é um desses, com sessão própria,
+-- e nenhum deles lê mensagem.
+CREATE TABLE IF NOT EXISTS coletores (
+  id         INTEGER PRIMARY KEY,
+  nome       TEXT NOT NULL,           -- "Celular da Cláudia", "Escritório"
+  telefone   TEXT,                    -- preenchido quando conecta
+  criado_em  INTEGER NOT NULL,
+  ultimo_em  INTEGER,                 -- última vez que trouxe agenda
+  contatos   INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS transmissoes (
   id          INTEGER PRIMARY KEY,
   titulo      TEXT NOT NULL,
