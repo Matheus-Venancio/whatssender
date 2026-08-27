@@ -3203,6 +3203,22 @@ function pintarStatus(s) {
 }
 
 const fluxo = new EventSource('/api/eventos');
+
+// RECONEXAO DO FLUXO = O SERVIDOR REINICIOU.
+//
+// O EventSource se reconecta sozinho, e sem isto a tela seguia exibindo o que
+// estava la antes — inclusive um QR do processo anterior. Quem escaneasse esse
+// codigo recebia "Nao foi possivel conectar o dispositivo" do WhatsApp: o
+// socket que gerou o QR tinha morrido no deploy. Aconteceu de verdade.
+let jaAbriu = false;
+fluxo.onopen = () => {
+  if (!jaAbriu) { jaAbriu = true; return; }
+  if (['conexao', 'coletar'].includes(estado.vista)) {
+    toast('Servidor reiniciou', 'Se havia um QR na tela, ele venceu. Gere outro.', 'aviso');
+    render();
+  }
+};
+
 fluxo.onmessage = (e) => {
   const evento = JSON.parse(e.data);
 
@@ -3268,6 +3284,23 @@ setInterval(() => {
   if (!estado.campanha) return;
   api('/firebase/status').then(pintarFirebase).catch(() => {});
 }, 20000);
+
+// Enquanto houver QR na tela, conferir o estado a cada 12s.
+//
+// O QR do WhatsApp é renovado pelo servidor e morre junto com o processo. Sem
+// esta ronda, a imagem ficava parada na tela dando a impressão de continuar
+// válida — e a pessoa escaneava um código vencido, recebendo do WhatsApp um
+// "não foi possível conectar o dispositivo" que não explica nada.
+setInterval(() => {
+  if (!estado.campanha) return;
+  if (!['conexao', 'coletar'].includes(estado.vista)) return;
+
+  // Só quando há QR de verdade na tela. A lista de coletores sozinha não
+  // justifica re-renderizar a cada 12s.
+  if (!document.querySelector('.qr-caixa img')) return;
+
+  render().catch(() => { /* a próxima ronda tenta de novo */ });
+}, 12000);
 
 const CORES_PAPEL = { admin: '#7c3aed', equipe: '#2563eb', candidato: '#16a34a' };
 
