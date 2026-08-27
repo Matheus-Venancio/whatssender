@@ -284,17 +284,13 @@
         </div>
         <div class="campo">
           <label for="atuacao">Sua Atuação / Profissão *</label>
-          <input type="text" id="atuacao" name="atuacao" required list="sugestoes-atuacao" placeholder="Ex.: Professora, Comerciante, Líder Comunitária">
-          <datalist id="sugestoes-atuacao">
-            <option value="Professora / Educadora">
-            <option value="Comerciante / Empreendedora">
-            <option value="Profissional da Saúde">
-            <option value="Líder Comunitária">
-            <option value="Dona de Casa">
-            <option value="Estudante">
-            <option value="Servidor Público">
-            <option value="Aposentado(a)">
-          </datalist>
+          <!-- Sem lista de sugestões: as opções fixas empurravam todo mundo para
+               oito rótulos e a resposta real ("costureira", "moto-táxi",
+               "agente de saúde") virava exceção. Campo aberto devolve a
+               profissão como a pessoa se descreve. -->
+          <input type="text" id="atuacao" name="atuacao" required
+                 autocomplete="organization-title"
+                 placeholder="Escreva com suas palavras">
         </div>
 
         <!-- Passo 2: Pautas e Lutas -->
@@ -427,9 +423,9 @@
         </div>
 
         <!-- Passo 4: Observações / Demanda -->
-        <div class="secao-titulo">💬 4. O que mais te preocupa no seu bairro? (Opcional)</div>
+        <div class="secao-titulo">💬 4. Se você pudesse mudar alguma coisa no Brasil hoje, o que seria? (Opcional)</div>
         <div class="campo">
-          <textarea id="observacoes" name="observacoes" rows="3" placeholder="Escreva sobre as melhorias que você mais luta para ver na sua região..."></textarea>
+          <textarea id="observacoes" name="observacoes" rows="3" placeholder="Escreva com suas palavras..."></textarea>
         </div>
 
         <button type="submit" class="btn-enviar" id="btn-submit">
