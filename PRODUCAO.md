@@ -74,6 +74,7 @@ Em **Environment**, confira/adicione:
 
 | Variável | Valor | Para quê |
 |---|---|---|
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | **o JSON inteiro da conta de serviço, numa linha** | **OBRIGATÓRIA.** Sem ela, um deploy apaga os cadastros |
 | `DATA_DIR` | `/var/dados` | manda o sistema gravar no disco |
 | `ADMIN_EMAIL` | seu e-mail | cria o administrador no 1º boot |
 | `ADMIN_SENHA` | senha forte | idem |
@@ -86,6 +87,45 @@ Sem `DATA_DIR`, o sistema avisa no log:
 ```
 ⚠  PRODUÇÃO SEM DISCO PERSISTENTE
 ```
+
+### Por que `FIREBASE_SERVICE_ACCOUNT_JSON` é a que não pode faltar
+
+Existe um ovo-e-galinha: a chave do Firebase de cada campanha fica em
+`data/campanhas/<slug>/firebase-key.json` — exatamente o arquivo que o disco
+efêmero apaga. Sem uma credencial vinda do **ambiente**, o boot não tem como
+buscar essa chave de volta; o Firestore da campanha nunca conecta, nada é
+espelhado, e no deploy seguinte não há o que restaurar. O cadastro que a equipe
+fez na rua some sem erro nenhum na tela.
+
+Com esta variável definida, o boot faz a cadeia inteira sozinho: busca as
+contas, as chaves e a sessão do WhatsApp no Firestore de controle, reconecta o
+Firebase de cada campanha e, se a base local estiver vazia, restaura as pessoas.
+
+**Valor:** abra o JSON da conta de serviço e cole o conteúdo inteiro numa linha
+só. Não é o caminho do arquivo — é o conteúdo.
+
+### Como conferir se está protegido
+
+O boot diz, em voz alta, para cada campanha:
+
+```
+[protecao:claudia] cadastros protegidos · Firebase claudia-66b8e
+```
+
+Se algo estiver faltando, sai um bloco em vermelho dizendo o quê e como
+resolver, e o painel mostra uma faixa no topo de todas as telas. Também dá para
+conferir de fora, sem login:
+
+```bash
+curl https://whatsappsender.com/api/saude
+```
+
+```json
+{ "cadastros_protegidos": [ { "campanha": "claudia", "protegido": true, "nivel": "ok" } ] }
+```
+
+`nivel` pode ser `ok` (sobrevive), `risco` (sobrevive, com ressalva) ou
+`perda` (**não** sobrevive ao próximo deploy).
 
 ## 3. Suba o código
 

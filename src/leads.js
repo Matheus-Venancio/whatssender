@@ -248,8 +248,58 @@ export function definicaoDoAbaixo(formId, formName) {
 // ---------------------------------------------------------------------------
 // Leitor de CSV sem dependência. O Meta exporta com vírgula e aspas duplas.
 // ---------------------------------------------------------------------------
-export function lerCsv(texto) {
-  const limpo = texto.replace(/^﻿/, '');
+/**
+ * Descobre a codificação e devolve texto.
+ *
+ * POR QUE: o Gerenciador de Anúncios do Meta não exporta um formato só. O mesmo
+ * abaixo-assinado sai ora em UTF-8 com vírgula, ora em UTF-16LE com TAB — e um
+ * arquivo UTF-16 lido como UTF-8 vira uma linha só, cheia de bytes nulos, que o
+ * parser aceita sem reclamar e importa como lixo. Melhor detectar pelo BOM, que
+ * é informação do próprio arquivo, do que confiar na extensão .csv.
+ */
+export function decodificarCsv(entrada) {
+  if (typeof entrada === 'string') return entrada.replace(/^\uFEFF/, '');
+  const b = Buffer.isBuffer(entrada) ? entrada : Buffer.from(entrada);
+
+  if (b[0] === 0xFF && b[1] === 0xFE) return b.subarray(2).toString('utf16le');
+  if (b[0] === 0xFE && b[1] === 0xFF) return b.subarray(2).swap16().toString('utf16le');
+  if (b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) return b.subarray(3).toString('utf8');
+
+  // Sem BOM: UTF-16 sem marca ainda aparece como um byte nulo a cada dois.
+  const amostra = b.subarray(0, 200);
+  const nulos = amostra.filter((x) => x === 0).length;
+  if (nulos > amostra.length / 4) {
+    return amostra[0] === 0 ? b.swap16().toString('utf16le') : b.toString('utf16le');
+  }
+  return b.toString('utf8').replace(/^\uFEFF/, '');
+}
+
+/**
+ * Qual caractere separa as colunas.
+ *
+ * Conta no CABEÇALHO, não no arquivo inteiro: nome e cidade de gente real vêm
+ * cheios de vírgula e ponto-e-vírgula, e contar tudo elegeria o separador
+ * errado num arquivo separado por TAB.
+ */
+export function detectarDelimitador(texto) {
+  const cabecalho = texto.split(/\r?\n/, 1)[0] ?? '';
+  const candidatos = ['\t', ',', ';', '|'];
+  let melhor = ',';
+  let maior = 0;
+  for (const d of candidatos) {
+    const n = cabecalho.split(d).length - 1;
+    if (n > maior) { maior = n; melhor = d; }
+  }
+  return maior ? melhor : ',';
+}
+
+/**
+ * Lê CSV/TSV sem dependência. Aceita Buffer ou string: a codificação e o
+ * delimitador são detectados, e podem ser forçados por `opcoes`.
+ */
+export function lerCsv(entrada, opcoes = {}) {
+  const limpo = decodificarCsv(entrada);
+  const DELIM = opcoes.delimitador ?? detectarDelimitador(limpo);
   const linhas = [];
   let campo = '';
   let linha = [];
@@ -264,7 +314,7 @@ export function lerCsv(texto) {
       continue;
     }
     if (c === '"') { dentroDeAspas = true; continue; }
-    if (c === ',') { linha.push(campo); campo = ''; continue; }
+    if (c === DELIM) { linha.push(campo); campo = ''; continue; }
     if (c === '\r') continue;
     if (c === '\n') { linha.push(campo); linhas.push(linha); linha = []; campo = ''; continue; }
     campo += c;

@@ -525,249 +525,6 @@ VISTAS.apoio = async () => {
 //
 // Disparo privado, um a um. A tela existe tanto para operar quanto para deixar
 // visível o que o sistema RECUSA — é a recusa que protege a campanha.
-VISTAS.transmissao = async () => {
-  const d = await api('/transmissao');
-  const faixas = estado.config?.faixas_apoio || [];
-
-  const situacao = (s) => ({
-    rascunho: ['#64748b', 'rascunho'], enviando: ['#16a34a', 'enviando'],
-    pausada: ['#d97706', 'pausada'], concluida: ['#2563eb', 'concluída'],
-    cancelada: ['#dc2626', 'cancelada']
-  })[s] || ['#64748b', s];
-
-  conteudo.innerHTML = `
-    <div class="cabecalho">
-      <div>
-        <h2>Transmissão</h2>
-        <p>Mensagem privada, uma por pessoa, no ritmo de gente. Não é lista de
-           transmissão do WhatsApp — cada uma chega na conversa individual.</p>
-      </div>
-      <div class="acoes">
-        <button class="btn primario" data-acao="nova-transmissao">+ Nova transmissão</button>
-      </div>
-    </div>
-
-    ${d.impedimento ? `<div class="alerta"><b>Parado agora:</b> ${esc(d.impedimento)}</div>` : ''}
-    ${!d.janela.pode ? `<div class="alerta"><b>Calendário eleitoral:</b> ${esc(d.janela.motivo)}</div>` : ''}
-
-    <div class="grade g-kpi" style="margin-bottom:16px">
-      ${kpi('Ritmo', `${d.limites.intervaloMin}–${d.limites.intervaloMax}s`, 'entre uma mensagem e outra')}
-      ${kpi('Teto diário', num(d.limites.porDia), `${d.limites.porHora}/hora · ${d.limites.horaInicio}h–${d.limites.horaFim}h`)}
-      ${kpi('Propaganda', d.calendario.inicioPropaganda, 'a partir desta data (art. 36)')}
-    </div>
-
-    <section class="card">
-      <header><h3>Envios</h3><span class="dica">${d.itens.length}</span></header>
-      <div class="corpo" style="padding-top:6px">
-        ${d.itens.length ? d.itens.map((t) => {
-          const [cor, rotulo] = situacao(t.situacao);
-          const feito = t.total ? Math.round(((t.total - t.pendentes) / t.total) * 100) : 0;
-          return `
-          <div class="fila-item">
-            <span style="min-width:0;flex:1">
-              <div class="nome">${esc(t.titulo)}
-                <span class="chip" style="background:${cor}22;color:${cor}">${rotulo}</span>
-                ${t.tipo === 'interno' ? '<span class="dica">· mobilização interna</span>' : ''}
-              </div>
-              <div class="porque">${num(t.enviadas)} de ${num(t.total)} enviadas${
-                t.falhas ? ` · ${num(t.falhas)} falha(s)` : ''} · ${feito}%</div>
-            </span>
-            <span style="display:flex;gap:6px;margin-left:auto">
-              ${t.situacao === 'enviando'
-                ? `<button class="btn" data-envio-pausar="${t.id}">Pausar</button>`
-                : (t.pendentes ? `<button class="btn primario" data-envio-iniciar="${t.id}">Enviar</button>` : '')}
-              ${t.pendentes ? `<button class="btn" data-envio-cancelar="${t.id}">Cancelar</button>` : ''}
-            </span>
-          </div>`;
-        }).join('') : '<p class="vazio">Nenhuma transmissão ainda.</p>'}
-      </div>
-    </section>
-
-    <div class="alerta info" style="margin-top:14px">
-      <b>O que o sistema recusa, e por quê.</b><br>
-      · Número sem vínculo nenhum com a campanha — a lei veda cadastro de terceiros
-        (Lei 9.504/97, art. 57-E). Só entra quem está na agenda, já conversou ou se cadastrou.<br>
-      · Quem respondeu <b>SAIR</b> — descadastramento é imediato e definitivo (art. 57-G).<br>
-      · Quem já reclamou da campanha.<br>
-      · Propaganda antes de ${esc(d.calendario.inicioPropaganda)} e no dia da eleição.<br>
-      Toda mensagem sai com <i>"${esc(d.rodape)}"</i> no rodapé.
-      <br><br>
-      Isto ajuda a cumprir a lei — <b>não substitui o advogado eleitoral da campanha</b>.
-      Resoluções do TSE mudam a cada eleição; confirme as datas antes do primeiro disparo.
-    </div>`;
-
-  $('#nav [data-vista="transmissao"]')?.classList.add('ativo');
-};
-
-async function formularioTransmissao() {
-  const faixas = estado.config?.faixas_apoio || [];
-  gaveta.innerHTML = `
-    <div class="topo">
-      <div style="min-width:0">
-        <div style="font-size:16px;font-weight:660;letter-spacing:-.02em">Nova transmissão</div>
-        <div style="font-size:12.5px;color:var(--tinta-3)">mensagem privada, uma por pessoa</div>
-      </div>
-      <button class="fechar" data-acao="fechar-gaveta">✕</button>
-    </div>
-    <div class="rolagem">
-      <div class="bloco">
-        <div class="campo"><label>Nome interno *</label>
-          <input id="tx-titulo" placeholder="Ex.: Convite reunião zona leste"></div>
-
-        <div class="campo"><label>Tipo *</label>
-          <select id="tx-tipo">
-            <option value="propaganda">Propaganda eleitoral — só a partir de 16/08</option>
-            <option value="interno">Mobilização interna — convite, aviso, agenda</option>
-          </select>
-        </div>
-
-        <div class="campo"><label>Mensagem *</label>
-          <textarea id="tx-modelo" rows="5" placeholder="{saudacao}! Vamos ter uma reunião em {cidade}…"></textarea>
-          <small style="display:block;margin-top:5px;font-size:11.5px;color:var(--tinta-3);line-height:1.5">
-            <code>{saudacao}</code> vira "Oi Maria" (e varia, para as mensagens não saírem iguais),
-            <code>{nome}</code> o primeiro nome, <code>{cidade}</code> a cidade.
-            O aviso de descadastramento entra sozinho no fim.
-          </small>
-        </div>
-
-        <div class="campo"><label>Anexo (opcional)</label>
-          <input id="tx-arquivo" type="file" accept="image/*,video/mp4,audio/*">
-          <small style="display:block;margin-top:5px;font-size:11.5px;color:var(--tinta-3);line-height:1.5">
-            Foto, vídeo ou áudio. A mensagem acima vira a legenda — no áudio ela vai
-            antes, porque o WhatsApp descarta legenda de áudio. Até 12 MB.
-          </small>
-          <div id="tx-anexo-info" style="margin-top:6px;font-size:12px"></div>
-        </div>
-      </div>
-
-      <div class="bloco">
-        <div style="font-size:13px;font-weight:600;margin-bottom:8px">Quem recebe</div>
-        <div class="campo"><label>Filtrar por potencial</label>
-          <select id="tx-apoio">
-            <option value="">Todos os elegíveis</option>
-            ${faixas.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="campo"><label>Cidade (opcional)</label><input id="tx-cidade"></div>
-
-        <div class="campo"><label>Buscar por nome, telefone ou cidade</label>
-          <input id="tx-busca" placeholder="digite para filtrar a lista"></div>
-
-        <div style="display:flex;gap:8px;align-items:center;margin:8px 0">
-          <button class="btn" data-acao="tx-carregar">↻ Carregar lista</button>
-          <button class="btn" data-acao="tx-todos">Marcar todos</button>
-          <button class="btn" data-acao="tx-nenhum">Desmarcar</button>
-          <span id="tx-contagem" class="dica" style="margin-left:auto"></span>
-        </div>
-
-        <div id="tx-lista" style="max-height:320px;overflow-y:auto;border:1px solid var(--linha);
-             border-radius:9px;padding:4px">
-          <p class="vazio" style="padding:14px">Clique em <b>Carregar lista</b> para escolher pessoa a pessoa.</p>
-        </div>
-      </div>
-
-      <div id="tx-previa" class="alerta info">Selecione quem recebe e clique em <b>Ver prévia</b>.</div>
-
-      <button class="btn" style="width:100%;justify-content:center;padding:11px;margin-bottom:8px"
-              data-acao="tx-previa">👁 Ver prévia</button>
-      <button class="btn primario" style="width:100%;justify-content:center;padding:12px"
-              data-acao="tx-criar">Criar transmissão</button>
-    </div>`;
-  gaveta.classList.add('aberto');
-  overlay.classList.add('aberto');
-
-  estado.txSelecionados = new Set();
-  estado.txMidia = null;
-
-  // O arquivo é lido no navegador e mandado em base64 — evita depender de
-  // multipart no servidor, que é bem mais código para o mesmo resultado.
-  $('#tx-arquivo', gaveta).addEventListener('change', async (e) => {
-    const arquivo = e.target.files?.[0];
-    const info = $('#tx-anexo-info');
-    if (!arquivo) { estado.txMidia = null; info.textContent = ''; return; }
-
-    const mb = arquivo.size / 1024 / 1024;
-    if (mb > 12) {
-      e.target.value = '';
-      estado.txMidia = null;
-      info.innerHTML = `<span style="color:var(--vermelho)">${mb.toFixed(1)} MB — o limite é 12 MB.</span>`;
-      return;
-    }
-
-    info.textContent = 'enviando…';
-    const base64 = await new Promise((ok) => {
-      const leitor = new FileReader();
-      leitor.onload = () => ok(leitor.result);
-      leitor.readAsDataURL(arquivo);
-    });
-
-    const familia = arquivo.type.startsWith('image') ? 'imagem'
-      : arquivo.type.startsWith('video') ? 'video'
-        : arquivo.type.startsWith('audio') ? 'audio' : null;
-
-    const r = await api('/transmissao/midia', {
-      method: 'POST', body: { nome: arquivo.name, tipo: familia, base64 }
-    });
-    if (r.erro) { estado.txMidia = null; info.innerHTML = `<span style="color:var(--vermelho)">${esc(r.erro)}</span>`; return; }
-
-    estado.txMidia = r;
-    info.innerHTML = `✅ ${esc(r.nome)} · ${(r.bytes / 1024 / 1024).toFixed(1)} MB · ${esc(r.tipo)}`;
-  });
-
-  $('#tx-busca', gaveta).addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); carregarElegiveis(); }
-  });
-
-  $('#tx-titulo', gaveta)?.focus();
-}
-
-const filtrosTransmissao = () => ({
-  apoio: $('#tx-apoio')?.value || '',
-  cidade: $('#tx-cidade')?.value.trim() || ''
-});
-
-/** Preenche a lista de escolha. Marca por padrão quem já estava marcado. */
-async function carregarElegiveis() {
-  const caixa = $('#tx-lista');
-  if (!caixa) return;
-  caixa.innerHTML = '<p class="vazio" style="padding:14px">carregando…</p>';
-
-  const r = await api('/transmissao/elegiveis', {
-    method: 'POST',
-    body: { filtros: filtrosTransmissao(), busca: $('#tx-busca')?.value || '' }
-  });
-
-  if (!r.itens?.length) {
-    caixa.innerHTML = '<p class="vazio" style="padding:14px">Ninguém elegível com esses filtros. '
-      + 'Só recebe quem já tem vínculo: está na agenda, já conversou ou se cadastrou.</p>';
-    atualizarContagem(0);
-    return;
-  }
-
-  caixa.innerHTML = r.itens.map((p) => `
-    <label style="display:flex;gap:9px;align-items:center;padding:7px 9px;border-radius:7px;cursor:pointer">
-      <input type="checkbox" data-pessoa-tx="${p.id}" ${estado.txSelecionados.has(p.id) ? 'checked' : ''}>
-      <span style="min-width:0;flex:1">
-        <div style="font-size:13px;font-weight:500">${esc(p.nome || p.telefone)}</div>
-        <div style="font-size:11.5px;color:var(--tinta-3)">${esc(p.cidade || 'sem cidade')} ·
-          ${esc(p.faixa_apoio)} · ${p.propensao}/100</div>
-      </span>
-    </label>`).join('')
-    + (r.total > r.itens.length
-      ? `<p class="dica" style="padding:8px 10px">mostrando ${r.itens.length} de ${r.total} — refine a busca</p>`
-      : '');
-
-  atualizarContagem(r.total);
-}
-
-function atualizarContagem(totalDisponivel = null) {
-  const el = $('#tx-contagem');
-  if (!el) return;
-  const n = estado.txSelecionados.size;
-  el.textContent = n
-    ? `${n} selecionada(s)`
-    : (totalDisponivel != null ? `${totalDisponivel} disponível(is)` : '');
-}
 
 VISTAS.fila = async () => {
   const f = estado.fila = await api('/fila');
@@ -1159,10 +916,29 @@ VISTAS.abaixos = async () => {
         <p>${num(total)} assinaturas captadas por anúncio. Cada uma vira uma ficha e um tema de interesse.</p>
       </div>
       <div class="acoes">
-        <button class="btn" data-acao="importar-leads">⬆ Importar novos CSV</button>
+        <!-- O input fica escondido: o botão é que tem o visual do painel. -->
+        <input type="file" id="csv-upload" accept=".csv,.tsv,.txt,text/csv" multiple hidden>
+        <button class="btn primario" data-acao="subir-csv">⬆ Subir CSV do Meta</button>
         <a class="btn" href="/api/export.csv?cadastro=sim">⬇ Exportar assinantes</a>
       </div>
     </div>
+
+    <section class="card" style="margin-bottom:16px">
+      <div class="corpo">
+        <p style="font-size:12.5px;color:var(--tinta-3);line-height:1.6;margin:0">
+          Exporte o CSV no Gerenciador de Anúncios e arraste aqui — ou clique em
+          <b>Subir CSV do Meta</b>. Vale mais de um arquivo de uma vez, e não importa
+          se o Meta exportou em UTF-8 com vírgula ou em UTF-16 com TAB: o sistema
+          detecta. Quem já está na base não duplica, e cada assinatura repetida é
+          ignorada pelo id do lead.
+        </p>
+        <div id="area-csv" style="margin-top:12px;border:2px dashed var(--linha);border-radius:12px;
+                    padding:22px;text-align:center;color:var(--tinta-4);font-size:12.5px;cursor:pointer">
+          Arraste os arquivos aqui
+        </div>
+        <div id="resultado-csv" style="margin-top:12px"></div>
+      </div>
+    </section>
 
     <div class="grade g-3">
       ${abaixos.map((a) => `
@@ -1192,7 +968,106 @@ VISTAS.abaixos = async () => {
           </div>
         </section>`).join('')}
     </div>`;
+
+  ligarUploadDeCsv();
 };
+
+/**
+ * Sobe CSV de lead pela tela — clique ou arrastar.
+ *
+ * O arquivo vai em base64 de propósito: o export do Meta às vezes vem em
+ * UTF-16, e ler como texto no navegador antes de enviar destruiria a
+ * codificação. Mandando os bytes crus, quem decide é o servidor.
+ */
+function ligarUploadDeCsv() {
+  const entrada = $('#csv-upload');
+  const area = $('#area-csv');
+  const saida = $('#resultado-csv');
+  if (!entrada || !area) return;
+
+  const lerBase64 = (arquivo) => new Promise((resolve, reject) => {
+    const leitor = new FileReader();
+    leitor.onload = () => resolve(String(leitor.result).split(',')[1] ?? '');
+    leitor.onerror = () => reject(new Error(`Não consegui ler ${arquivo.name}`));
+    leitor.readAsDataURL(arquivo);
+  });
+
+  async function enviar(lista) {
+    const arquivos = [...lista].filter((f) => f.size > 0);
+    if (!arquivos.length) return;
+
+    saida.innerHTML = `<p class="sub">lendo ${arquivos.length} arquivo(s)…</p>`;
+    let corpo;
+    try {
+      corpo = await Promise.all(arquivos.map(async (f) => ({
+        nome: f.name, conteudo: await lerBase64(f)
+      })));
+    } catch (erro) {
+      saida.innerHTML = `<p class="alerta">${esc(erro.message)}</p>`;
+      return;
+    }
+
+    saida.innerHTML = '<p class="sub">importando…</p>';
+    const r = await api('/leads/upload', { method: 'POST', body: { arquivos: corpo } })
+      .catch((erro) => ({ erro: erro.message }));
+
+    if (r.erro) {
+      saida.innerHTML = `<p class="alerta">${esc(r.erro)}</p>`;
+      return;
+    }
+
+    estado.panorama = null;
+    saida.innerHTML = `
+      <div class="alerta info" style="margin:0">
+        <b>${num(r.total.importados)} assinatura(s) importada(s)</b> ·
+        ${num(r.total.novos)} pessoa(s) nova(s) ·
+        ${num(r.total.jaExistiam)} já estavam na base ·
+        ${num(r.total.repetidos)} repetida(s) ignorada(s)
+        ${r.total.invalidos ? ` · <b>${num(r.total.invalidos)} sem telefone válido</b>` : ''}
+      </div>
+      ${r.espelhado
+        ? '<p class="sub" style="margin:8px 0 0">✓ Já espelhado no Firebase — sobrevive ao próximo deploy.</p>'
+        : `<p class="alerta" style="margin:8px 0 0">⚠ O Firebase não está conectado: isto entrou
+             só no banco local e some se o servidor for recriado. Veja a faixa no topo da tela.</p>`}
+      ${r.arquivos.map((a) => `
+        <div class="linha-dado">
+          <span class="k">${esc(a.arquivo)}</span>
+          <span class="v">${a.erro ? `<b style="color:#dc2626">${esc(a.erro)}</b>`
+            : `${num(a.lidos)} linha(s) · ${num(a.importados)} importada(s)`}</span>
+        </div>`).join('')}`;
+
+    // Recarrega os números da tela, mantendo o resultado visível.
+    const html = saida.innerHTML;
+    await VISTAS.abaixos();
+    const novaSaida = $('#resultado-csv');
+    if (novaSaida) novaSaida.innerHTML = html;
+  }
+
+  entrada.addEventListener('change', () => enviar(entrada.files));
+
+  // Ligado DIRETO no botão, e não pelo clique delegado do documento.
+  //
+  // Abrir o seletor de arquivo só é permitido dentro do gesto do usuário. O
+  // listener delegado é `async` e tem `await` em ramos anteriores; se um deles
+  // rodar antes de chegar aqui, o gesto já terminou e o Firefox e o Safari
+  // recusam o `.click()` sem avisar — o botão simplesmente não faz nada.
+  $('[data-acao="subir-csv"]')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    entrada.click();
+  });
+
+  area.addEventListener('click', () => entrada.click());
+  area.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    area.style.borderColor = 'var(--roxo)';
+  });
+  area.addEventListener('dragleave', () => { area.style.borderColor = ''; });
+  area.addEventListener('drop', (e) => {
+    e.preventDefault();
+    area.style.borderColor = '';
+    enviar(e.dataTransfer.files);
+  });
+}
 
 // ============================================================ FIREBASE
 VISTAS.firebase = async () => {
@@ -2548,107 +2423,6 @@ document.addEventListener('click', async (e) => {
   if (alvo('[data-acao="nova-campanha"]')) return formularioNovaCampanha();
   if (alvo('[data-acao="novo-usuario"]')) return formularioNovoUsuario();
 
-  if (alvo('[data-acao="nova-transmissao"]')) return formularioTransmissao();
-
-  if (alvo('[data-acao="tx-carregar"]')) return carregarElegiveis();
-
-  if (alvo('[data-acao="tx-todos"]') || alvo('[data-acao="tx-nenhum"]')) {
-    const marcar = Boolean(alvo('[data-acao="tx-todos"]'));
-    for (const caixa of document.querySelectorAll('[data-pessoa-tx]')) {
-      caixa.checked = marcar;
-      const id = Number(caixa.dataset.pessoaTx);
-      if (marcar) estado.txSelecionados.add(id);
-      else estado.txSelecionados.delete(id);
-    }
-    atualizarContagem();
-    return;
-  }
-
-  const caixaPessoa = e.target.closest?.('[data-pessoa-tx]');
-  if (caixaPessoa) {
-    const id = Number(caixaPessoa.dataset.pessoaTx);
-    if (caixaPessoa.checked) estado.txSelecionados.add(id);
-    else estado.txSelecionados.delete(id);
-    atualizarContagem();
-    return;
-  }
-
-  if (alvo('[data-acao="tx-previa"]')) {
-    const b = alvo('[data-acao="tx-previa"]');
-    b.disabled = true; b.textContent = 'conferindo…';
-    const r = await api('/transmissao/previa', {
-      method: 'POST',
-      body: {
-        filtros: filtrosTransmissao(),
-        pessoaIds: estado.txSelecionados?.size ? [...estado.txSelecionados] : null,
-        modelo: $('#tx-modelo').value
-      }
-    });
-    b.disabled = false; b.textContent = '👁 Ver prévia';
-
-    const horas = r.total ? Math.round((r.total * 90) / 3600 * 10) / 10 : 0;
-    $('#tx-previa').innerHTML = r.total
-      ? `<b>${num(r.total)} pessoa(s)</b> vão receber. No ritmo seguro, isso leva
-         cerca de <b>${horas}h</b> — o sistema envia sozinho, respeitando o horário.
-         ${r.primeiros?.length ? `<div style="margin-top:8px;font-size:12px;color:var(--tinta-3)">
-           Primeiros: ${r.primeiros.map((p) => esc(p.nome || 'sem nome')).join(', ')}…</div>` : ''}
-         ${r.exemplo ? `<div style="margin-top:10px;padding:10px;background:var(--fundo-2);
-           border-radius:8px;white-space:pre-wrap;font-size:12.5px">${esc(r.exemplo)}</div>` : ''}`
-      : '<b>Ninguém elegível com esses filtros.</b> Lembre: só recebe quem já tem vínculo — '
-        + 'está na agenda, já conversou ou se cadastrou.';
-    return;
-  }
-
-  if (alvo('[data-acao="tx-criar"]')) {
-    const b = alvo('[data-acao="tx-criar"]');
-    const titulo = $('#tx-titulo').value.trim();
-    const modelo = $('#tx-modelo').value.trim();
-    if (!titulo) return toast('Faltam dados', 'Dê um nome à transmissão.', 'critico');
-    if (!modelo && !estado.txMidia) {
-      return toast('Faltam dados', 'Escreva a mensagem ou anexe um arquivo.', 'critico');
-    }
-
-    b.disabled = true; b.textContent = 'criando…';
-    const r = await api('/transmissao', {
-      method: 'POST',
-      body: {
-        titulo, modelo, tipo: $('#tx-tipo').value,
-        filtros: filtrosTransmissao(),
-        pessoaIds: estado.txSelecionados?.size ? [...estado.txSelecionados] : null,
-        midia: estado.txMidia || null
-      }
-    });
-    b.disabled = false; b.textContent = 'Criar transmissão';
-    if (r.erro) return toast('Não deu', r.erro, 'critico');
-
-    fecharGaveta();
-    toast('Transmissão criada', `${num(r.alvos)} pessoa(s) na lista. Clique em Enviar para começar.`);
-    return render();
-  }
-
-  const iniciarEnvio = alvo('[data-envio-iniciar]');
-  if (iniciarEnvio) {
-    const r = await api(`/transmissao/${iniciarEnvio.dataset.envioIniciar}/iniciar`, { method: 'POST' });
-    if (r.erro) return toast('Não pode enviar agora', r.erro, 'critico');
-    toast('Envio começou', 'O sistema manda uma a uma, no ritmo seguro. Pode fechar o painel.');
-    return render();
-  }
-
-  const pausarEnvio = alvo('[data-envio-pausar]');
-  if (pausarEnvio) {
-    await api(`/transmissao/${pausarEnvio.dataset.envioPausar}/pausar`, { method: 'POST' });
-    toast('Pausado', 'Retome quando quiser — a fila continua de onde parou.');
-    return render();
-  }
-
-  const cancelarEnvio = alvo('[data-envio-cancelar]');
-  if (cancelarEnvio) {
-    if (!confirm('Cancelar esta transmissão? Quem ainda não recebeu não vai receber.')) return;
-    const r = await api(`/transmissao/${cancelarEnvio.dataset.envioCancelar}/cancelar`, { method: 'POST' });
-    toast('Cancelada', `${num(r.cancelados || 0)} envio(s) descartados.`);
-    return render();
-  }
-
   const faixaApoio = alvo('[data-faixa-apoio]');
   if (faixaApoio) {
     // Clicar na faixa já selecionada volta para "todas".
@@ -2828,17 +2602,6 @@ document.addEventListener('click', async (e) => {
 
   if (alvo('[data-acao="ler-alertas"]')) {
     pintarAlertas(await api('/alertas/lidos', { method: 'POST', body: { todos: true } }));
-    return render();
-  }
-
-  if (alvo('[data-acao="importar-leads"]')) {
-    const b = alvo('[data-acao="importar-leads"]');
-    b.disabled = true; b.textContent = 'importando…';
-    const r = await api('/leads/importar', { method: 'POST' });
-    estado.panorama = null;
-    if (r.erro) toast('Importação', r.erro, 'critico');
-    else toast('Importação concluída',
-      `${r.total.importados} assinaturas · ${r.total.novos} pessoas novas · ${r.total.repetidos} já existiam`);
     return render();
   }
 
@@ -3130,6 +2893,42 @@ function telaSemCampanha() {
       Peça ao administrador para te vincular a uma campanha.</div>`;
 }
 
+/**
+ * Faixa de aviso quando o cadastro de hoje não sobrevive a um deploy.
+ *
+ * Fica no topo de TODAS as telas de propósito. O aviso existia só como linha de
+ * log no servidor, que ninguém lê — e a perda aparecia depois, com a equipe já
+ * tendo cadastrado gente na rua o dia inteiro.
+ */
+async function faixaDeProtecao() {
+  const caixa = $('#faixa-protecao');
+  if (!caixa || !estado.campanha) return;
+  let p;
+  try { p = await api('/protecao'); } catch { return; }
+  estado.protecao = p;
+
+  if (p.nivel === 'ok') { caixa.style.display = 'none'; caixa.innerHTML = ''; return; }
+
+  const perda = p.nivel === 'perda';
+  caixa.style.display = 'block';
+  caixa.innerHTML = `
+    <div style="border:2px solid ${perda ? '#dc2626' : '#f59e0b'};
+                background:${perda ? '#fef2f2' : '#fffbeb'};
+                border-radius:12px;padding:12px 14px;margin-bottom:16px">
+      <div style="font-weight:800;font-size:13.5px;color:${perda ? '#991b1b' : '#92400e'}">
+        ${perda
+          ? '✗ Os cadastros feitos agora VÃO SUMIR no próximo deploy'
+          : '⚠ Atenção à persistência dos cadastros'}
+      </div>
+      <ul style="margin:8px 0 0;padding-left:18px;font-size:12.5px;line-height:1.6;
+                 color:${perda ? '#991b1b' : '#92400e'}">
+        ${p.problemas.map((x) => `
+          <li><b>${esc(x.o_que)}</b><br>${esc(x.por_que)}<br>
+              <span style="opacity:.85">→ ${esc(x.como_resolver)}</span></li>`).join('')}
+      </ul>
+    </div>`;
+}
+
 async function render() {
   // Sem campanha ativa, toda rota da API responde 400: não adianta tentar.
   // A tela de Acessos é a exceção — é lá que a campanha é criada.
@@ -3139,6 +2938,8 @@ async function render() {
   } catch (erro) {
     conteudo.innerHTML = `<div class="alerta">Falha ao carregar: ${esc(erro.message)}</div>`;
   }
+  // Depois da vista: a faixa vive fora do #conteudo e não é apagada por ela.
+  faixaDeProtecao();
 }
 
 // --------------------------------------------------------- status ao vivo

@@ -22,7 +22,7 @@ import { recomputar } from './scoring.js';
 import { analisarMensagem } from './risco.js';
 import { analisarSentimento, atualizarConversa } from './conversa.js';
 import { registrarExecutor, pausar as pausarFila } from './adicionar-grupo.js';
-import * as transmissao from './transmissao.js';
+import { pediuParaSair, descadastrar } from './optout.js';
 import { atribuirPorMensagem } from './embaixadores.js';
 import { publicarPessoa, publicarGrupo, publicarAlerta, enfileirar, COLECOES } from './firestore.js';
 import * as nuvem from './nuvem.js';
@@ -420,8 +420,8 @@ function processarMensagemPrivada(mensagem, remoto) {
   // A lei dá 48 horas para atender o descadastramento (Lei 9.504/97, art.
   // 57-G). Depender de alguém ler o painel e clicar dentro desse prazo é
   // apostar contra o expediente — e o custo de errar é multa e denúncia.
-  if (!deMim && conteudo.texto && transmissao.pediuParaSair(conteudo.texto)) {
-    transmissao.descadastrar(pessoaId, 'respondeu pedindo saída');
+  if (!deMim && conteudo.texto && pediuParaSair(conteudo.texto)) {
+    descadastrar(pessoaId, 'respondeu pedindo saída');
     registrarAlerta({
       tipo: 'optout', gravidade: 'aviso', pessoaId,
       titulo: 'Pediu para sair da lista',
@@ -888,32 +888,6 @@ export async function conectar({ parearCom = null, modo = null } = {}) {
 
     if (connection === 'open') {
       // A fila de adição só funciona com o socket vivo.
-      // O disparo privado usa o mesmo socket — e só existe enquanto ele existe.
-      transmissao.registrarExecutor(async (jid, texto, anexo) => {
-        // Campanha migrada para o WA-Core2 continua usando ESTA fila de ritmo,
-        // só que despachando pela API. O rate limit do fornecedor é proteção de
-        // borda, não fila anti-banimento — a doc deles diz isso com todas as letras.
-        const instancia = await import('./instancia.js');
-        if (instancia.provedorDa(slug) === 'wacore') {
-          return instancia.enviar(slug, jid, texto, anexo);
-        }
-        if (!anexo) return sessao().sock.sendMessage(jid, { text: texto });
-
-        // Com anexo o texto vira legenda — mandar imagem e texto separados
-        // gera duas notificações e parece disparo automático.
-        const conteudo = { caption: texto || undefined };
-        if (anexo.tipo === 'imagem') conteudo.image = { url: anexo.caminho };
-        else if (anexo.tipo === 'video') conteudo.video = { url: anexo.caminho };
-        else if (anexo.tipo === 'audio') {
-          // Áudio não aceita legenda: o WhatsApp descarta. Vai o áudio como
-          // mensagem de voz e, se houver texto, ele segue antes.
-          if (texto) await sessao().sock.sendMessage(jid, { text: texto });
-          return sessao().sock.sendMessage(jid, {
-            audio: { url: anexo.caminho }, mimetype: 'audio/mp4', ptt: true
-          });
-        }
-        return sessao().sock.sendMessage(jid, conteudo);
-      });
 
       registrarExecutor({
         adicionar: async (grupoJid, pessoaJid) => {
@@ -974,7 +948,6 @@ export async function conectar({ parearCom = null, modo = null } = {}) {
       const s = sessao();
       s.sock = null;
       registrarExecutor(null);
-      transmissao.registrarExecutor(null);
 
       // Só estes dois casos exigem ler o QR de novo. Todo o resto é queda
       // temporária — reconectar sozinho é o comportamento certo.

@@ -126,7 +126,7 @@ export async function desconectar(slug, opcoes = {}) {
 /**
  * Envia uma mensagem pela origem da campanha.
  *
- * `anexo` chega como {caminho, tipo, nome} — o formato que transmissao.js já
+ * `anexo` chega como {caminho, tipo, nome} — o formato que o painel já
  * usa. Para o WA-Core2 ele vira base64: a alternativa seria hospedar o arquivo
  * numa URL pública, e material de campanha não deve ficar baixável por quem
  * descobrir o endereço.

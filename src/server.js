@@ -19,13 +19,13 @@ import * as whatsapp from './whatsapp.js';
 import * as firebase from './firestore.js';
 import * as adicao from './adicionar-grupo.js';
 import * as embaixadores from './embaixadores.js';
-import * as transmissao from './transmissao.js';
 import * as instancia from './instancia.js';
 import * as coletores from './coletores.js';
 import * as wacore from './wacore.js';
-import { importarPasta } from './importar-leads.js';
+import { importarPasta, importarEnviados } from './importar-leads.js';
 import * as contas from './contas.js';
 import { restaurarDoFirestore } from './restaurar.js';
+import { estadoDaProtecao, avisarNoBoot } from './protecao.js';
 import * as nuvem from './nuvem.js';
 import { ligarAvisos } from './notificar.js';
 import { tomarTrava, soltarTrava, mensagemDeTravada } from './trava.js';
@@ -113,7 +113,6 @@ const transmitir = (evento) => {
 };
 whatsapp.assinar(transmitir);
 adicao.assinarFila((e) => transmitir({ ...e, tipo: `fila_${e.tipo}` }));
-transmissao.assinar((e) => transmitir({ ...e, tipo: `envio_${e.tipo}` }));
 coletores.assinar((e) => transmitir({ ...e, tipo: 'coletores' }));
 
 // Alerta e mensagem no privado viram aviso no WhatsApp de quem coordena.
@@ -200,6 +199,17 @@ async function apiPublica(req, res, url) {
       versao: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? 'local',
       // true = os dados estão em pasta efêmera e somem no próximo deploy.
       semDisco: SEM_DISCO || (process.env.NODE_ENV === 'production' && PASTA_DADOS.startsWith(RAIZ)),
+      // A pergunta que importa na véspera de sair para a rua: o que for
+      // cadastrado hoje continua existindo depois do próximo deploy?
+      cadastros_protegidos: contas.listarCampanhas({ apenasAtivas: true }).map((c) => ({
+        campanha: c.slug,
+        ...(() => {
+          try {
+            const e = comCampanha(c.slug, () => estadoDaProtecao(c.slug));
+            return { protegido: e.protegido, nivel: e.nivel };
+          } catch { return { protegido: false, nivel: 'desconhecido' }; }
+        })()
+      })),
       campanhas: contas.listarCampanhas({ apenasAtivas: true }).length,
       whatsapp: whatsapp.sessoesAtivas()
     });
@@ -482,6 +492,11 @@ async function api(req, res, url, sessao) {
         // Número conectado, para montar o link wa.me de captação.
         whatsapp_telefone: getConfig('whatsapp_telefone', null)
       });
+    }
+
+    // Diagnóstico da persistência: o painel usa para a faixa de alerta.
+    if (rota === '/protecao' && metodo === 'GET') {
+      return json(res, estadoDaProtecao(campanha.slug));
     }
 
     if (rota === '/abaixos' && metodo === 'GET') return json(res, listarAbaixos());
@@ -818,6 +833,26 @@ async function api(req, res, url, sessao) {
       return json(res, resultado);
     }
 
+    // Subir o CSV pela tela. Em produção não existe "colocar o arquivo na
+    // pasta": o disco é do servidor, não da máquina de quem exportou o lead.
+    if (rota === '/leads/upload' && metodo === 'POST') {
+      if (!pode('importarLeads')) return negar();
+      const { arquivos } = await lerCorpo(req);
+      if (!Array.isArray(arquivos) || !arquivos.length) {
+        return json(res, { erro: 'Nenhum arquivo recebido.' }, 400);
+      }
+      try {
+        const resultado = importarEnviados(arquivos);
+        if (resultado.erro) return json(res, resultado, 400);
+        // Empurra a fila agora: o objetivo do upload é o dado ficar seguro, e
+        // esperar o ciclo de 15s deixaria uma janela em que ele só existe aqui.
+        await firebase.processarFila();
+        return json(res, resultado);
+      } catch (erro) {
+        return json(res, { erro: erro.message }, 400);
+      }
+    }
+
     // --- WhatsApp ----------------------------------------------------------
     // --- coletores de agenda -----------------------------------------------
     if (rota.startsWith('/coletores')) {
@@ -882,75 +917,6 @@ async function api(req, res, url, sessao) {
         campanha: campanha.slug,
         grupos: listarGrupos().map((g) => ({ nome: g.nome, membros: g.membros }))
       });
-    }
-    // --- transmissão (disparo privado) --------------------------------------
-    if (rota.startsWith('/transmissao')) {
-      if (!pode('adicionarEmMassa')) return negar();
-
-      if (rota === '/transmissao' && metodo === 'GET') {
-        return json(res, {
-          itens: transmissao.listar(),
-          estado: transmissao.estadoDoEnvio(),
-          impedimento: transmissao.porQueNaoAgora(),
-          janela: transmissao.janelaLegal({}),
-          limites: transmissao.LIMITES,
-          calendario: transmissao.CALENDARIO,
-          rodape: transmissao.RODAPE_OPTOUT
-        });
-      }
-
-      // Lista para escolher pessoa a pessoa. Já vem filtrada pelas mesmas
-      // regras do disparo: o que aparece aqui é o que pode receber.
-      if (rota === '/transmissao/elegiveis' && metodo === 'POST') {
-        const { filtros = {}, busca = '' } = await lerCorpo(req);
-        const termo = String(busca).trim().toLowerCase();
-        let lista = transmissao.elegiveis(filtros);
-        if (termo) {
-          lista = lista.filter((p) =>
-            (p.nome || '').toLowerCase().includes(termo)
-            || (p.telefone || '').includes(termo)
-            || (p.cidade || '').toLowerCase().includes(termo));
-        }
-        return json(res, { total: lista.length, itens: lista.slice(0, 300) });
-      }
-
-      if (rota === '/transmissao/midia' && metodo === 'POST') {
-        try { return json(res, transmissao.guardarMidia(await lerCorpo(req))); }
-        catch (erro) { return json(res, { erro: erro.message }, 400); }
-      }
-
-      if (rota === '/transmissao/previa' && metodo === 'POST') {
-        const { filtros = {}, limite = null, modelo = '', pessoaIds = null } = await lerCorpo(req);
-        // Escolha manual manda: se a equipe marcou nomes, é essa a lista.
-        let lista = pessoaIds?.length
-          ? transmissao.elegiveis({}).filter((p) => pessoaIds.includes(p.id))
-          : transmissao.elegiveis(filtros);
-        if (limite) lista = lista.slice(0, Number(limite));
-        return json(res, {
-          total: lista.length,
-          exemplo: lista[0] ? transmissao.montarTexto(modelo || '{saudacao}!', lista[0], 0) : null,
-          primeiros: lista.slice(0, 8).map((p) => ({ nome: p.nome, cidade: p.cidade, faixa: p.faixa_apoio }))
-        });
-      }
-
-      if (rota === '/transmissao' && metodo === 'POST') {
-        try {
-          return json(res, transmissao.criar({ ...(await lerCorpo(req)), criadaPor: usuario.email }));
-        } catch (erro) { return json(res, { erro: erro.message }, 400); }
-      }
-
-      const casaT = rota.match(/^\/transmissao\/(\d+)(\/[a-z]+)?$/);
-      if (casaT) {
-        const id = Number(casaT[1]);
-        if (!casaT[2] && metodo === 'GET') return json(res, transmissao.obter(id) ?? { erro: 'não encontrada' });
-        if (metodo === 'POST') {
-          try {
-            if (casaT[2] === '/iniciar') return json(res, transmissao.iniciar(id));
-            if (casaT[2] === '/pausar') return json(res, transmissao.pausar(id));
-            if (casaT[2] === '/cancelar') return json(res, transmissao.cancelar(id));
-          } catch (erro) { return json(res, { erro: erro.message }, 400); }
-        }
-      }
     }
 
     if (rota.startsWith('/whatsapp/') && metodo === 'POST') {
@@ -1178,14 +1144,7 @@ servidor.listen(PORTA, async () => {
   for (const c of campanhas) {
     console.log(`  · ${c.nome} → /cadastro/${c.slug}`);
 
-    // Campanha no WA-Core2 não tem socket local, então ninguém registraria o
-    // executor da fila de transmissão — ela ficaria criando listas que nunca
-    // saem. Aqui o despachante é a própria API, e a fila de ritmo continua a
-    // mesma: é ela que protege o número, não o rate limit do fornecedor.
     if ((c.provedor || 'baileys') === 'wacore') {
-      comCampanha(c.slug, () => transmissao.registrarExecutor(
-        (jid, texto, anexo) => instancia.enviar(c.slug, jid, texto, anexo)
-      ));
       console.log(`    provedor: WA-Core2${wacore.configurado() ? '' : ' (sem WACORE_TOKEN!)'}`);
     }
     try {
@@ -1220,6 +1179,12 @@ servidor.listen(PORTA, async () => {
     } catch (erro) {
       console.error(`  [restauro:${c.slug}] falhou:`, erro.message);
     }
+
+    // Último passo de cada campanha: dizer, em voz alta, se o que for
+    // cadastrado hoje sobrevive ao próximo deploy. Antes disso a informação
+    // existia espalhada em quatro lugares e ninguém juntava.
+    try { comCampanha(c.slug, () => avisarNoBoot(c.slug)); }
+    catch (erro) { console.error(`  [protecao:${c.slug}]`, erro.message); }
   }
 
   whatsapp.autoConectarTodas(campanhas.map((c) => c.slug))

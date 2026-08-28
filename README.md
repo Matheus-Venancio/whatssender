@@ -145,7 +145,26 @@ especificamente de criança no ambiente digital — que é o recorte que sustent
 projeto de lei. Também é a nova opção **📱 Proteção Digital** no formulário de
 pautas.
 
-### Importar novos leads
+### Subir o CSV pela tela
+
+Em produção não existe "colocar o arquivo na pasta": o disco é do servidor, não
+da máquina de quem exportou o lead. A aba **Abaixo-assinados** tem área de
+upload — clique ou arraste, vários arquivos de uma vez.
+
+**Formato:** o Gerenciador de Anúncios não exporta um formato só. O mesmo
+abaixo-assinado sai ora em **UTF-8 com vírgula**, ora em **UTF-16LE com TAB**. O
+sistema detecta pelo BOM e pelo cabeçalho — não pela extensão. Isso importa
+porque um arquivo UTF-16 lido como UTF-8 não dá erro nenhum: vira uma linha só
+com bytes nulos e a importação "funciona" gravando lixo.
+
+O upload guarda uma cópia em `data/campanhas/<slug>/leads/` antes de importar,
+empurra a fila do Firestore na hora (para o lead não ficar só no banco local) e
+diz na tela se foi espelhado. Se o Firebase estiver fora, o aviso é explícito.
+
+Nada duplica: assinatura repetida é reconhecida pelo `lead_id`, inclusive quando
+o mesmo lead vem no outro formato.
+
+### Importar novos leads (linha de comando)
 
 O Meta exporta CSV pelo Gerenciador de Anúncios. Jogue os arquivos em `data/leads/` e:
 
@@ -652,6 +671,32 @@ tenha.
 
 ---
 
+## 9. O cadastro de hoje sobrevive ao próximo deploy?
+
+Num servidor sem disco persistente, a resposta depende de uma cadeia de quatro
+elos em arquivos diferentes: disco, credencial de sistema, Firestore da campanha
+conectado e fila de saída andando. Quando um elo quebrava, o painel continuava
+verde e a perda só aparecia depois do deploy seguinte — com a equipe já tendo
+cadastrado gente na rua o dia inteiro.
+
+`src/protecao.js` junta os quatro numa resposta só, e ela aparece em três lugares:
+
+- **no boot**, uma linha quando está tudo certo e um bloco em vermelho quando não está;
+- **no painel**, uma faixa no topo de *todas* as telas, com o que fazer;
+- **em `/api/saude`**, no campo `cadastros_protegidos` — dá para conferir sem login.
+
+O elo que mais falta é `FIREBASE_SERVICE_ACCOUNT_JSON`. É a credencial de
+**sistema**, e resolve um ovo-e-galinha: a chave do Firebase de cada campanha
+mora em `data/campanhas/<slug>/firebase-key.json`, que é justamente o que o disco
+efêmero apaga. Sem ela vinda do ambiente, o boot não tem como buscar a chave de
+volta — o Firestore nunca conecta, nada é espelhado e não há o que restaurar.
+Com ela, o boot refaz a cadeia sozinho: contas, chaves, sessão do WhatsApp e,
+se a base local estiver vazia, as pessoas.
+
+Ver `PRODUCAO.md`, seção 2.
+
+---
+
 ## Testes
 
 ```bash
@@ -669,6 +714,14 @@ npm run teste
   texto do convite e a parada automática após erros seguidos.
 - **`teste:conversa`** (31 verificações) — sentimento, intenção, sugestões para conversa hostil/positiva/pedido de ajuda, pessoa sem nome, e a caixa de entrada (contadores e filtros).
 - **`teste:risco`** (37 verificações) — 14 frases que precisam virar alerta, 12 frases normais que não podem, prioridade entre sinais, deduplicação, conflito coletivo e o que chega no painel.
+- **`teste:importacao`** (36 verificações) — UTF-8, UTF-16 com e sem BOM, vírgula,
+  TAB e ponto-e-vírgula; vírgula dentro do dado que não engana a detecção; upload em
+  base64; reimportação que não duplica nem quando o formato muda; nome de arquivo
+  hostil; e planilha que não é lead, contada como inválida em vez de importada.
+- **`teste:protecao`** (20 verificações) — o diagnóstico de persistência em cada
+  combinação de credencial, chave e Firestore; que todo problema venha com o que
+  fazer, não só com o diagnóstico; e que o boot grite quando há risco e fique
+  quieto quando não há.
 - **`teste:coleta`** (61 verificações) — código próprio e não adivinhável por embaixador,
   atribuição de quem trouxe quem, primeira atribuição prevalecendo sobre a segunda,
   embaixador desativado que para de atribuir, os três sinais novos de potencial de apoio
@@ -700,6 +753,8 @@ src/
   firestore.js         ponte com o Firebase (outbox, lotes, documentos)
   embaixadores.js      ⭐ coletar dados: captação atribuída por embaixador
   gerir-embaixadores.js    CLI da captação (npm run embaixadores)
+  protecao.js          ⭐ o cadastro de hoje sobrevive ao próximo deploy?
+  optout.js            ⭐ descadastramento (art. 57-G), independente de disparo
   grupos-campanha.js   ⭐ que grupo é da campanha e que pilar ele atende
   classificar-grupos.js    CLI da classificação (npm run grupos)
   risco.js             ⭐ dicionário de atrito — quando a conversa azeda

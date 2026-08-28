@@ -55,6 +55,19 @@ services:
       - key: FIRESTORE_INTERVALO_MS
         value: '15000'
 
+      # OBRIGATÓRIA. Sem ela, um deploy apaga os cadastros.
+      #
+      # É a credencial de SISTEMA, e resolve um ovo-e-galinha: a chave do
+      # Firebase de cada campanha fica em data/campanhas/<slug>/firebase-key.json
+      # — exatamente o que o disco efêmero apaga. Com esta variável no ambiente,
+      # o boot busca a chave de volta, o Firestore reconecta e a base é
+      # restaurada sozinha. Sem ela, nada é espelhado e não há o que restaurar.
+      #
+      # Valor: o conteúdo INTEIRO do JSON da conta de serviço, numa linha só.
+      # Defina no painel do Render (Environment), nunca neste arquivo.
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+
       # Criado no primeiro boot, se ainda não existir nenhum usuário.
       # Defina no painel do Render (Environment), não aqui.
       - key: ADMIN_EMAIL

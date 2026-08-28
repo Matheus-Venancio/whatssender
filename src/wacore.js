@@ -13,7 +13,7 @@
 // O QUE O RATE LIMIT DELES NÃO É: a documentação é explícita — 60/min em send é
 // "proteção de borda contra token vazado ou loop, não uma fila anti-banimento
 // para lotes". Quem protege o número do bloqueio continua sendo a fila em
-// transmissao.js: intervalo aleatório, teto diário, horário, parada em falha.
+// adicionar-grupo.js: intervalo aleatório, teto diário, horário, parada em falha.
 // Trocar de provedor não muda nada disso.
 //
 // AMBIENTE COMPARTILHADO: a doc proíbe chamar connect-by-external no ambiente

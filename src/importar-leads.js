@@ -6,7 +6,7 @@
 // O casamento é sempre pelo telefone: quem assinou e já está num grupo de
 // WhatsApp vira uma pessoa só, com as duas origens registradas.
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { db, agora, usarCampanha, pastaDeLeads, campanhaAtual } from './db.js';
 import { lerCsv, prepararLead } from './leads.js';
@@ -71,9 +71,20 @@ function upsertPessoaDoLead(lead) {
 }
 
 export function importarArquivo(caminho) {
-  const linhas = lerCsv(readFileSync(caminho, 'utf8'));
+  // Buffer, não string: `lerCsv` precisa dos bytes para achar o BOM e decidir a
+  // codificação. Ler como utf8 já teria destruído um arquivo UTF-16.
+  return importarConteudo(readFileSync(caminho), caminho.split(/[\\/]/).pop());
+}
+
+/**
+ * O importador de verdade. Recebe o conteúdo, não o caminho — é o que permite
+ * importar tanto de `data/campanhas/<slug>/leads/` quanto de um upload do
+ * painel, sem duplicar a regra.
+ */
+export function importarConteudo(conteudo, nomeArquivo = 'upload.csv') {
+  const linhas = lerCsv(conteudo);
   const resumo = {
-    arquivo: caminho.split(/[\\/]/).pop(),
+    arquivo: nomeArquivo,
     lidos: linhas.length,
     importados: 0, novos: 0, jaExistiam: 0, casadosComGrupo: 0,
     repetidos: 0, invalidos: 0, abaixos: new Set()
@@ -158,26 +169,85 @@ export function importarPasta(pasta = null) {
   if (!arquivos.length) return { erro: 'Nenhum CSV encontrado em data/leads/.' };
 
   const resumos = arquivos.map((f) => importarArquivo(join(pasta, f)));
+  return finalizarImportacao(resumos);
+}
 
+/**
+ * Importa arquivos enviados pelo painel.
+ *
+ * `arquivos` = [{ nome, conteudo: Buffer }]. Guarda uma cópia em
+ * data/campanhas/<slug>/leads/ antes de importar — se algo der errado na
+ * interpretação, o arquivo original continua no servidor para conferência, e
+ * não depende de alguém reencontrar o export no Gerenciador de Anúncios.
+ */
+export function importarEnviados(arquivos = []) {
+  if (!arquivos.length) return { erro: 'Nenhum arquivo recebido.' };
+
+  const pasta = pastaDeLeadsAtual();
+  mkdirSync(pasta, { recursive: true });
+
+  const resumos = [];
+  for (const arquivo of arquivos) {
+    const conteudo = Buffer.isBuffer(arquivo.conteudo)
+      ? arquivo.conteudo
+      : Buffer.from(arquivo.conteudo ?? '', 'base64');
+
+    // Nome saneado: o que vem do navegador é texto de terceiro e não pode
+    // virar caminho. Sem isto, "../../algo.csv" escreve fora da pasta.
+    const seguro = String(arquivo.nome || 'upload.csv')
+      .replace(/[^\w.\-]+/g, '_').replace(/^\.+/, '').slice(-120) || 'upload.csv';
+    const destino = join(pasta, `${Date.now()}-${seguro}`);
+
+    try {
+      writeFileSync(destino, conteudo);
+    } catch { /* sem disco de escrita: importa mesmo assim, o dado é o que importa */ }
+
+    try {
+      resumos.push(importarConteudo(conteudo, arquivo.nome || seguro));
+    } catch (erro) {
+      resumos.push({
+        arquivo: arquivo.nome || seguro,
+        erro: erro.message,
+        lidos: 0, importados: 0, novos: 0, jaExistiam: 0,
+        casadosComGrupo: 0, repetidos: 0, invalidos: 0,
+        abaixos: [], pessoasTocadas: [], assinaturas: [], abaixosIds: []
+      });
+    }
+  }
+
+  return finalizarImportacao(resumos);
+}
+
+/**
+ * O que acontece depois de importar, seja da pasta ou de um upload:
+ * recalcular o perfil de quem foi tocado e publicar no Firestore.
+ *
+ * A publicação é o que faz o lead sobreviver a um deploy — sem ela o cadastro
+ * fica só no banco local, que num servidor sem disco é apagado.
+ */
+function finalizarImportacao(resumos) {
   recomputar();
 
-  // Publica no Firestore o que mudou.
-  const pessoas = new Set(resumos.flatMap((r) => r.pessoasTocadas));
+  const pessoas = new Set(resumos.flatMap((r) => r.pessoasTocadas ?? []));
   for (const id of pessoas) publicarPessoa(id);
-  for (const id of new Set(resumos.flatMap((r) => r.abaixosIds))) publicarAbaixo(id);
-  for (const id of resumos.flatMap((r) => r.assinaturas)) publicarAssinatura(id);
+  for (const id of new Set(resumos.flatMap((r) => r.abaixosIds ?? []))) publicarAbaixo(id);
+  for (const id of resumos.flatMap((r) => r.assinaturas ?? [])) publicarAssinatura(id);
 
+  const soma = (campo) => resumos.reduce((s, r) => s + (r[campo] ?? 0), 0);
   return {
     arquivos: resumos.map(({ pessoasTocadas, assinaturas, abaixosIds, ...r }) => r),
     total: {
-      importados: resumos.reduce((s, r) => s + r.importados, 0),
-      novos: resumos.reduce((s, r) => s + r.novos, 0),
-      jaExistiam: resumos.reduce((s, r) => s + r.jaExistiam, 0),
-      casadosComGrupo: resumos.reduce((s, r) => s + r.casadosComGrupo, 0),
-      repetidos: resumos.reduce((s, r) => s + r.repetidos, 0),
-      invalidos: resumos.reduce((s, r) => s + r.invalidos, 0),
+      lidos: soma('lidos'),
+      importados: soma('importados'),
+      novos: soma('novos'),
+      jaExistiam: soma('jaExistiam'),
+      casadosComGrupo: soma('casadosComGrupo'),
+      repetidos: soma('repetidos'),
+      invalidos: soma('invalidos'),
       pessoasAfetadas: pessoas.size
-    }
+    },
+    // Sem isto o painel diz "importado com sucesso" e o dado some no deploy.
+    espelhado: Boolean(estadoDoFirebase().conectado)
   };
 }
 
